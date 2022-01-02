@@ -12,6 +12,7 @@ typedef void (*IRCChannelQuitCallback)(char *name, char *message, void *userdata
 
 void initIRCClient();
 int connectToServer(const char *server, int port);
+int disconnectFromServer();
 void updateIRCClient(IRCUpdateCallback, IRCChannelJoinCallback, IRCChannelPartCallback, IRCChannelQuitCallback, void *);
 void sendIRCCommand(const char *command);
 

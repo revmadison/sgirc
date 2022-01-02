@@ -85,3 +85,19 @@ int RemoveMessageTarget(struct MessageTarget *target)
 	return -1;
 }
 
+void RemoveAllMessageTargets()
+{
+	for(int i = 0; i < NumMessageTargets; i++)
+	{
+		struct MessageTarget *target = &MessageTargets[i];
+		for(int m = 0; m < target->messageAt; m++)
+		{
+			MessageFree(target->messages[m]);
+		}
+		free(target->messages);
+		free(target->title);
+	}
+	NumMessageTargets = 0;
+}
+	
+

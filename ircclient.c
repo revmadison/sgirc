@@ -331,3 +331,13 @@ int connectToServer(const char *server, int port)
 	return 0;
 }
 
+int disconnectFromServer()
+{
+	int wasConnected = connected;
+
+	if (connected) connected = 0;
+	if (activeSocket >= 0) close(activeSocket);
+
+	return wasConnected;
+}
+

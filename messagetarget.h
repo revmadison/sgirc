@@ -26,6 +26,7 @@ extern int NumMessageTargets;
 int AddMessageTarget(char *targetName, char *title, int type);
 struct MessageTarget * FindMessageTargetByName(char *name);
 int RemoveMessageTarget(struct MessageTarget *target);
+void RemoveAllMessageTargets();
 
 void AddMessageToTarget(struct MessageTarget *target, struct Message *message);
 

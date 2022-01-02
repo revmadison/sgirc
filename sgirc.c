@@ -1021,6 +1021,25 @@ char *stringFromXmString(XmString xmString)
 	return strdup(buffer);
 }
 
+void connectAndSetNick(char *server, int port, char *nick)
+{
+	disconnectFromServer();
+	RemoveAllMessageTargets();
+	AddMessageTarget(SERVER_TARGET, server, MESSAGETARGET_SERVER);
+	MessageTargetMembers[0] = MemberListInit();
+	currentTarget = FindMessageTargetByName(SERVER_TARGET);
+	SetupChannelList();
+
+	printf("Attempting to connect to %s:%d\n", server, port);
+	connectToServer(server, port);
+
+	char connbuffer[1024];
+	snprintf(connbuffer, 1023, "NICK %s", nick);
+	sendIRCCommand(connbuffer);
+	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
+	sendIRCCommand(connbuffer);
+}
+
 void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
 {
 	XmSelectionBoxCallbackStruct *cbs;
@@ -1040,15 +1059,7 @@ void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer cal
 	prefs.defaultPort = port;
 	SavePrefs(&prefs);
 
-	printf("Attempting to connect to %s:%d\n", server, port);
-	connectToServer(server, port);
-
-	char connbuffer[1024];
-	snprintf(connbuffer, 1023, "NICK %s", nick);
-	sendIRCCommand(connbuffer);
-	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
-	sendIRCCommand(connbuffer);
-
+	connectAndSetNick(server, port, nick);
 	free(server);
 }
 
@@ -1067,6 +1078,11 @@ void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data)
 	}
 	prefs.defaultNick = strdup(newnick);
 	SavePrefs(&prefs);
+
+	char connbuffer[1024];
+	snprintf(connbuffer, 1023, "NICK %s", nick);
+	sendIRCCommand(connbuffer);
+
 }
 
 void closeDialogCallback(Widget widget, XtPointer client_data, XtPointer call_data)
@@ -1205,9 +1221,6 @@ int main(int argc, char** argv)
 
 	XtVaSetValues(mainWindow, XmNmenuBar, menubar, XmNworkWindow, formLayout, NULL);
 
-
-
-
 	actions.string = "selection";
 	actions.proc = selection;
 	XtAppAddActions(app, &actions, 1);
@@ -1290,11 +1303,13 @@ int main(int argc, char** argv)
 
 	AddMessageTarget(SERVER_TARGET, "Server", MESSAGETARGET_SERVER);
 	MessageTargetMembers[0] = MemberListInit();
-
 	currentTarget = FindMessageTargetByName(SERVER_TARGET);
-
 	SetupChannelList();
 
+	if(prefs.defaultServer)
+	{
+		connectAndSetNick(prefs.defaultServer, prefs.defaultPort>0?prefs.defaultPort:6667, nick);
+	}
 	XtAppMainLoop(app);
 
 	return 0;
