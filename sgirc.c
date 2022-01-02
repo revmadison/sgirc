@@ -17,6 +17,7 @@
 #include "memberlist.h"
 #include "prefs.h"
 
+
 #define MAX(a,b) (a >= b ? a : b)
 
 String fallbacks[] = {
@@ -35,7 +36,7 @@ struct MemberList *MessageTargetMembers[MAX_MESSAGE_TARGETS];
 int MessageTargetHasUpdate[MAX_MESSAGE_TARGETS];
 
 static XtAppContext  app;
-static Widget chatList, channelList, namesList, scrollbar;
+static Widget window, chatList, channelList, namesList, scrollbar;
 static XFontStruct *chatFontStruct;
 static GC chatGC;
 static GC selectedGC;
@@ -617,7 +618,7 @@ void updateSelectionIndices()
 	int scrollValue;
 	int i;
 	GC gc = chatGC;
-	char buffer[1024];
+//	char buffer[1024];
 
 	selectStartLine = selectStartY / 12;	// This is due to us using a set font that's 12 pixels high...
 	selectEndLine = selectEndY / 12;
@@ -810,8 +811,8 @@ void captureSelection()
 
 	if(strlen(selectedText) > 1)
 	{
-		int status;
-		long id = 0;
+//		int status;
+//		long id = 0;
 		Time t = XtLastTimestampProcessed(XtDisplay(chatList));
 
 		int result = XtOwnSelection(chatList, XA_PRIMARY, t, convertSelectionCallback, loseSelectionCallback, NULL);
@@ -983,10 +984,158 @@ void selection(Widget widget, XEvent *event, String *args, Cardinal *num_args)
 	forceRedraw();
 }
 
+char *stringFromXmString(XmString xmString)
+{
+	XmStringContext context;
+	char buffer[1024];
+	char *text;
+	XmStringCharSet charset;
+	XmStringDirection direction;
+	XmStringComponentType unknownTag;
+	unsigned short *unknownLen;
+	unsigned char *unknownData;
+	XmStringComponentType type;
+
+	if(!XmStringInitContext(&context, xmString))
+	{
+		return strdup("");
+	}
+	buffer[0] = 0;
+	while((type = XmStringGetNextComponent(context, &text, &charset, &direction, &unknownTag, &unknownLen, &unknownData)) != XmSTRING_COMPONENT_END)
+	{
+		if(type == XmSTRING_COMPONENT_TEXT || type == XmSTRING_COMPONENT_LOCALE_TEXT) {
+			if(strlen(buffer)+strlen(text) > 1023) {
+				XtFree(text);
+				break;
+			}
+			strcat(buffer, text);
+			XtFree(text);
+		} else if(type == XmSTRING_COMPONENT_SEPARATOR) {
+			if(strlen(buffer) >= 1023) break;
+
+			strcat(buffer, "\n");
+		}
+	}
+
+	XmStringFreeContext(context);
+	return strdup(buffer);
+}
+
+void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
+{
+	XmSelectionBoxCallbackStruct *cbs;
+	cbs = (XmSelectionBoxCallbackStruct *)call_data;
+	char *server = stringFromXmString(cbs->value);
+	char *portstr = strchr(server, ':');
+	int port = 6667;
+	if(portstr) {
+		*portstr = 0;
+		portstr++;
+		port = atoi(portstr);
+	}
+	if(prefs.defaultServer) {
+		free(prefs.defaultServer);
+	}
+	prefs.defaultServer = strdup(server);
+	prefs.defaultPort = port;
+	SavePrefs(&prefs);
+
+	printf("Attempting to connect to %s:%d\n", server, port);
+	connectToServer(server, port);
+
+	char connbuffer[1024];
+	snprintf(connbuffer, 1023, "NICK %s", nick);
+	sendIRCCommand(connbuffer);
+	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
+	sendIRCCommand(connbuffer);
+
+	free(server);
+}
+
+void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
+{
+	XmSelectionBoxCallbackStruct *cbs;
+	cbs = (XmSelectionBoxCallbackStruct *)call_data;
+	char *newnick = stringFromXmString(cbs->value);
+
+	printf("Changing nick from %s to %s\n", nick, newnick);
+	free(nick);
+	nick = newnick;
+
+	if(prefs.defaultNick) {
+		free(prefs.defaultNick);
+	}
+	prefs.defaultNick = strdup(newnick);
+	SavePrefs(&prefs);
+}
+
+void closeDialogCallback(Widget widget, XtPointer client_data, XtPointer call_data)
+{
+	XtDestroyWidget(XtParent(widget));
+}
+
+void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call_data)
+{
+	// client_data is an int for index of menu item
+	switch((int)client_data) {
+	case 0:	// Connect...
+		{
+			Widget dialog;
+			XmString str = XmStringCreateLocalized("Enter server[:port]");
+			char buffer[1024];
+			Arg args[5];
+			int n = 0;
+			buffer[0] = 0;
+			if(prefs.defaultServer) {
+				strcat(buffer, prefs.defaultServer);
+			}
+			if(prefs.defaultPort > 0 && prefs.defaultPort != 6667) {
+				char ports[16];
+				sprintf(ports, ":%d", prefs.defaultPort);
+				strcat(buffer, ports);
+			}
+			XmString cur = XmStringCreate(buffer, "CUR_SERVER");		
+			XtSetArg(args[n], XmNselectionLabelString, str); n++;
+			XtSetArg(args[n], XmNautoUnmanage, True); n++;
+			XtSetArg(args[n], XmNtextString, cur); n++;
+			dialog = (Widget)XmCreatePromptDialog(window, "server_prompt", args, n);
+			XmStringFree(str);
+			XmStringFree(cur);
+			XtAddCallback(dialog, XmNokCallback, connectToServerCallback, NULL);
+			XtAddCallback(dialog, XmNcancelCallback, closeDialogCallback, NULL);
+			XtSetSensitive(XtNameToWidget(dialog, "Help"), False);
+			XtManageChild(dialog);
+		}
+		break;
+	case 1:	// Set nick...
+		{
+			Widget dialog;
+			XmString str = XmStringCreateLocalized("Enter your nick:");
+			XmString cur = XmStringCreate(nick, "CUR_NICK");
+			Arg args[5];
+			int n = 0;
+			XtSetArg(args[n], XmNselectionLabelString, str); n++;
+			XtSetArg(args[n], XmNautoUnmanage, True); n++;
+			XtSetArg(args[n], XmNtextString, cur); n++;
+			dialog = (Widget)XmCreatePromptDialog(window, "nick_prompt", args, n);
+			XmStringFree(str);
+			XmStringFree(cur);
+			XtAddCallback(dialog, XmNokCallback, setNickCallback, NULL);
+			XtAddCallback(dialog, XmNcancelCallback, closeDialogCallback, NULL);
+			XtSetSensitive(XtNameToWidget(dialog, "Help"), False);
+			XtManageChild(dialog);
+		}
+		break;
+	case 2:	// Exit
+		XtAppSetExitFlag(app);
+		break;
+	}
+}
+
 
 int main(int argc, char** argv) 
 {
-	Widget      	window, textField, formLayout;
+	Widget      	textField, formLayout, mainWindow, menubar;
 	Arg         	args[32];
 	int         	n = 0;
 	XGCValues		gcv;
@@ -1003,6 +1152,7 @@ int main(int argc, char** argv)
 
 	NumMessageTargets = 0;
 
+	/*
 	if (argc < 4)
 	{
 		printf("Usage: sgirc <server> <port> <nick>\n");
@@ -1011,7 +1161,14 @@ int main(int argc, char** argv)
 	const char *server = argv[1];
 	int port = atoi(argv[2]);
 	nick = argv[3];
-	
+	*/
+	if(prefs.defaultNick) 
+	{
+		nick = strdup(prefs.defaultNick);
+	} else {
+		nick = strdup("def_sgirc_n");
+	}
+	printf("Default nick: %s\n", nick);
 
 	initIRCClient();
 
@@ -1021,7 +1178,35 @@ int main(int argc, char** argv)
 
 	XtAppAddTimeOut(app, 100, updateTimerCallback, &app);
 
-	formLayout = XtVaCreateWidget("formLayout", xmFormWidgetClass, window, NULL);
+	mainWindow = (Widget)XmCreateMainWindow(window, "main_window", NULL, 0);
+	XtManageChild(mainWindow);
+
+	formLayout = XtVaCreateWidget("formLayout", xmFormWidgetClass, mainWindow, NULL);
+
+	XmString file = XmStringCreateLocalized("File");
+	menubar = XmVaCreateSimpleMenuBar(mainWindow, "menubar", 
+		XmVaCASCADEBUTTON, file, 'F',
+		NULL);
+	XmStringFree(file);
+	XtManageChild(menubar);
+
+	XmString connect = XmStringCreateLocalized("Connect...");
+	XmString setNick = XmStringCreateLocalized("Set nick...");
+	XmString exit = XmStringCreateLocalized("Exit");
+	XmVaCreateSimplePulldownMenu(menubar, "fileMenu", 0, fileMenuSimpleCallback,
+		XmVaPUSHBUTTON, connect, 'C', NULL, NULL,
+		XmVaPUSHBUTTON, setNick, 'n', NULL, NULL,
+		XmVaSEPARATOR,
+		XmVaPUSHBUTTON, exit, 'x', NULL, NULL,
+		NULL);
+	XmStringFree(connect);
+	XmStringFree(setNick);
+	XmStringFree(exit);
+
+	XtVaSetValues(mainWindow, XmNmenuBar, menubar, XmNworkWindow, formLayout, NULL);
+
+
+
 
 	actions.string = "selection";
 	actions.proc = selection;
@@ -1103,19 +1288,12 @@ int main(int argc, char** argv)
 		XChangeWindowAttributes(XtDisplay(chatList), XtWindow(chatList), CWBitGravity, &attrs);
 	}
 
-	AddMessageTarget(SERVER_TARGET, server, MESSAGETARGET_SERVER);
+	AddMessageTarget(SERVER_TARGET, "Server", MESSAGETARGET_SERVER);
 	MessageTargetMembers[0] = MemberListInit();
 
 	currentTarget = FindMessageTargetByName(SERVER_TARGET);
 
 	SetupChannelList();
-
-	connectToServer(server, port);
-	char connbuffer[1024];
-	snprintf(connbuffer, 1023, "NICK %s", nick);
-	sendIRCCommand(connbuffer);
-	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
-	sendIRCCommand(connbuffer);
 
 	XtAppMainLoop(app);
 

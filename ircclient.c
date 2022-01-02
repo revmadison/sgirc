@@ -227,7 +227,9 @@ void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCall
 	{
 		if (errno != EAGAIN && errno != EWOULDBLOCK)
 		{
-			printf("Error reading from socket: %d!\n", errno);
+			//printf("Error reading from socket: %d!\n", errno);
+			printf("Connection has been closed.");
+			exit(1);
 		}
 	}
 

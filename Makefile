@@ -1,4 +1,4 @@
-MOTIFLIBS = -lSgm -lXm -lXt -lX11 -lPW
+MOTIFLIBS = -lSgm -lXm -lXt -lXpm -lX11 -lPW
 LLDLIBS=  $(MOTIFLIBS) -lm
 
 CC=c99
