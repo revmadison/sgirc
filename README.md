@@ -14,8 +14,12 @@ Built and tested with either MIPSPro or [RSE's](https://github.com/sgidevnet/sgu
 
 ## running
 
-`./sgirc <servername> <port> <nick>`
-Currently all three arguments are required despite their (unused) presence in the settings file
+Usage: `sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>] [-c]`
+        -n: Set nick to use
+        -s: Set server to connect to
+        -p: Set port to connect to
+        -f: Specify alternate preferences file
+        -c: Connect at startup
 
 ## configuring
 

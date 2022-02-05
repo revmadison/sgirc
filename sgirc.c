@@ -3,14 +3,16 @@
 #include <Xm/Form.h>
 #include <Xm/Label.h>
 #include <Xm/List.h>
+#include <Xm/MainW.h>
 #include <Xm/ScrollBar.h>
+#include <Xm/SelectioB.h>
 #include <Xm/Text.h>
 #include <Xm/TextF.h>
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
-
+#include <unistd.h>
 #include "ircclient.h"
 #include "messagetarget.h"
 #include "message.h"
@@ -19,6 +21,8 @@
 
 
 #define MAX(a,b) (a >= b ? a : b)
+
+#pragma set woff 3970
 
 String fallbacks[] = {
 	"*sgiMode: true",
@@ -41,6 +45,8 @@ static XFontStruct *chatFontStruct;
 static GC chatGC;
 static GC selectedGC;
 static char *nick;
+
+static char *altPrefsFile = NULL;
 
 static int LinesPerMessage[MESSAGE_TARGET_CAPACITY];
 static int LineBreaksPerMessage[MESSAGE_TARGET_CAPACITY][16];
@@ -218,7 +224,6 @@ int recalculateMessageBreaks()
 {
 	Dimension chatWidth;
 	int i;
-	int usableWidth;
 	int totalLines;
 	int nameOffset = prefs.showTimestamp ? 64 : 4;
 	int textOffset = prefs.showTimestamp ? 180 : 120;
@@ -617,8 +622,6 @@ void updateSelectionIndices()
 	Position y = 12;
 	int scrollValue;
 	int i;
-	GC gc = chatGC;
-//	char buffer[1024];
 
 	selectStartLine = selectStartY / 12;	// This is due to us using a set font that's 12 pixels high...
 	selectEndLine = selectEndY / 12;
@@ -644,13 +647,12 @@ void updateSelectionIndices()
 		int linewidth = 0;
 		char *line = removeControlCodes(currentTarget->messages[i]->message);
 		int linelen = strlen(line);
-		int isBridge = 0;
 
 		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL)
 		{
 			if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName))
 			{
-				isBridge = processForDiscordBridge(NULL, line, &linestart);
+				processForDiscordBridge(NULL, line, &linestart);
 			}
 		}
 
@@ -756,7 +758,6 @@ void captureSelection()
 		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++)
 		{
 			int yline = (y+scrollValue-12)/12;
-			int drewLine = 0;
 
 			if(yline > selectEndLine)
 			{
@@ -952,8 +953,6 @@ void chatListRedrawCallback(Widget widget, XtPointer client_data, XtPointer call
 
 void selection(Widget widget, XEvent *event, String *args, Cardinal *num_args)
 {
-	Position x, y;
-	XButtonEvent *bevent = (XButtonEvent *)event;
 	int scrollValue;
 	XtVaGetValues (scrollbar, XmNvalue, &scrollValue, NULL);
 
@@ -992,7 +991,7 @@ char *stringFromXmString(XmString xmString)
 	XmStringCharSet charset;
 	XmStringDirection direction;
 	XmStringComponentType unknownTag;
-	unsigned short *unknownLen;
+	unsigned short unknownLen;
 	unsigned char *unknownData;
 	XmStringComponentType type;
 
@@ -1057,7 +1056,7 @@ void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer cal
 	}
 	prefs.defaultServer = strdup(server);
 	prefs.defaultPort = port;
-	SavePrefs(&prefs);
+	SavePrefs(&prefs, altPrefsFile);
 
 	connectAndSetNick(server, port, nick);
 	free(server);
@@ -1077,7 +1076,7 @@ void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data)
 		free(prefs.defaultNick);
 	}
 	prefs.defaultNick = strdup(newnick);
-	SavePrefs(&prefs);
+	SavePrefs(&prefs, altPrefsFile);
 
 	char connbuffer[1024];
 	snprintf(connbuffer, 1023, "NICK %s", nick);
@@ -1148,6 +1147,22 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 	}
 }
 
+void printUsage()
+{
+	printf("Usage: sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>] [-c]\n");
+	printf("\t-n: Set nick to use\n");
+	printf("\t-s: Set server to connect to\n");
+	printf("\t-p: Set port to connect to\n");
+	printf("\t-f: Specify alternate preferences file\n");
+	printf("\t-c: Connect at startup\n");
+	printf("\n");
+}
+
+void addServerConnection(char *server, int port, char *nick)
+{
+	connectAndSetNick(server,  port>0?port:6667, nick);
+}
+
 
 int main(int argc, char** argv) 
 {
@@ -1158,28 +1173,51 @@ int main(int argc, char** argv)
 	String			translations = "<Btn1Down>: selection(start) ManagerGadgetArm()\n<Btn1Up>: selection(stop) ManagerGadgetActivate()\n<Btn1Motion>: selection(move) ManagerGadgetButtonMotion()";
 	XtActionsRec	actions;
 
+	// Command line args
+	char *cmdServer = NULL;
+	char *cmdPort = NULL;
+	char *cmdNick = NULL;
+	int cmdAutoConnect = 0;
+	int cmdOption;
+
 	selectStartX = -1;
 	selectStartY = -1;
 	selectEndX = -1;
 	selectEndY = -1;
 
-	LoadPrefs(&prefs);
-	SavePrefs(&prefs);
+	while((cmdOption = getopt(argc, argv, "s:p:n:f:c")) != -1)
+	{
+		switch(cmdOption)
+		{
+		case 's':
+			cmdServer = strdup(optarg);
+			break;
+		case 'p':
+			cmdPort = strdup(optarg);
+			break;
+		case 'n':
+			cmdNick = strdup(optarg);
+			break;
+		case 'f':
+			altPrefsFile = strdup(optarg);	// This one is static for the run
+			break;
+		case 'c':
+			cmdAutoConnect = 1;
+			break;
+		case '?':
+			printUsage();
+			return 0;
+		}
+	}
+	LoadPrefs(&prefs, altPrefsFile);
+	SavePrefs(&prefs, altPrefsFile);
 
 	NumMessageTargets = 0;
 
-	/*
-	if (argc < 4)
+	if(cmdNick)
 	{
-		printf("Usage: sgirc <server> <port> <nick>\n");
-		return 1;
-	}
-	const char *server = argv[1];
-	int port = atoi(argv[2]);
-	nick = argv[3];
-	*/
-	if(prefs.defaultNick) 
-	{
+		nick = strdup(cmdNick);
+	} else if(prefs.defaultNick) {
 		nick = strdup(prefs.defaultNick);
 	} else {
 		nick = strdup("def_sgirc_n");
@@ -1306,9 +1344,14 @@ int main(int argc, char** argv)
 	currentTarget = FindMessageTargetByName(SERVER_TARGET);
 	SetupChannelList();
 
-	if(prefs.defaultServer)
+	if(cmdAutoConnect || prefs.connectOnLaunch)
 	{
-		connectAndSetNick(prefs.defaultServer, prefs.defaultPort>0?prefs.defaultPort:6667, nick);
+		if(cmdServer)
+		{
+			addServerConnection(cmdServer, cmdPort?atoi(cmdPort):0, nick);
+		} else if(prefs.defaultServer) {
+			addServerConnection(prefs.defaultServer, prefs.defaultPort>0?prefs.defaultPort:6667, nick);
+		}
 	}
 	XtAppMainLoop(app);
 

@@ -1,8 +1,9 @@
-MOTIFLIBS = -lSgm -lXm -lXt -lXpm -lX11 -lPW
-LLDLIBS=  $(MOTIFLIBS) -lm
+#MOTIFLIBS = -lSgm -lXm -lXt -lXpm -lX11 -lPW
+MOTIFLIBS = -lXm -lXt -lX11 -lPW
+LLDLIBS=  $(MOTIFLIBS) 
 
 CC=c99
-CFLAGS=-mips4 -n32 -g 
+CFLAGS=-mips3 -n32 -g 
 
 COBJECTS=\
 	sgirc.o \

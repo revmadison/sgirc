@@ -18,10 +18,11 @@ struct Prefs {
 	char *defaultNick;
 	int saveLogs;
 	char *discordBridgeName;
+	int connectOnLaunch;
 };
 
-int LoadPrefs(struct Prefs *prefs);
-int SavePrefs(struct Prefs *prefs);
+int LoadPrefs(struct Prefs *prefs, char *prefsFile);
+int SavePrefs(struct Prefs *prefs, char *prefsFile);
 
 #endif
 

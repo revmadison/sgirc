@@ -6,8 +6,10 @@
 #include "prefs.h"
 #include "thirdparty/cJSON.h"
 
-int LoadPrefs(struct Prefs *prefs)
+int LoadPrefs(struct Prefs *prefs, char *prefsFile)
 {
+	char *fileName;
+
 	if(!prefs) return PREFS_LOAD_FAILURE;
 
 	// Setup default prefs first
@@ -17,17 +19,25 @@ int LoadPrefs(struct Prefs *prefs)
 	prefs->defaultNick = NULL;
 	prefs->saveLogs = 1;
 	prefs->discordBridgeName = NULL;
+	prefs->connectOnLaunch = 0;
 
-	char *homeDir = getenv("HOME");
-	if(!homeDir)
+	if(prefsFile) 
 	{
-		return PREFS_LOAD_NOFILE;
+		fileName = strdup(prefsFile);
+	} else {
+		char *homeDir = getenv("HOME");
+		if(!homeDir)
+		{
+			return PREFS_LOAD_NOFILE;
+		}
+		fileName = (char *)malloc(strlen(homeDir)+14);
+		strcpy(fileName, homeDir);
+		strcat(fileName, "/.sgirc/prefs");
 	}
-	char *fileName = (char *)malloc(strlen(homeDir)+14);
-	strcpy(fileName, homeDir);
-	strcat(fileName, "/.sgirc/prefs");
+
 	FILE *fp = fopen(fileName, "r");
 	free(fileName);
+
 	int fileSize = 0;
 	char *fileBuffer;
 	if(!fp)
@@ -85,27 +95,39 @@ int LoadPrefs(struct Prefs *prefs)
 	{
 		prefs->discordBridgeName = strdup(cJSON_GetStringValue(discordBridgeName));
 	}
+	cJSON *connectOnLaunch = cJSON_GetObjectItem(prefsJSON, "connectOnLaunch");
+	if(connectOnLaunch && cJSON_IsBool(connectOnLaunch))
+	{
+		prefs->connectOnLaunch = cJSON_IsTrue(connectOnLaunch) ? 1 : 0;
+	}
 
 	cJSON_Delete(prefsJSON);
 
 	return PREFS_SUCCESS;
 }
 
-int SavePrefs(struct Prefs *prefs)
+int SavePrefs(struct Prefs *prefs, char *prefsFile)
 {
+	char *fileName;
+
 	if(!prefs) return PREFS_SAVE_FAILURE;
 
-	char *homeDir = getenv("HOME");
-	if(!homeDir)
+	if(prefsFile)
 	{
-		return PREFS_LOAD_NOFILE;
-	}
-	char *fileName = (char *)malloc(strlen(homeDir)+14);
-	strcpy(fileName, homeDir);
-	strcat(fileName, "/.sgirc");
+		fileName = strdup(prefsFile);
+	} else {
+		char *homeDir = getenv("HOME");
+		if(!homeDir)
+		{
+			return PREFS_LOAD_NOFILE;
+		}
+		char *fileName = (char *)malloc(strlen(homeDir)+14);
+		strcpy(fileName, homeDir);
+		strcat(fileName, "/.sgirc");
 
-	mkdir(fileName, 00700);
-	strcat(fileName, "/prefs");
+		mkdir(fileName, 00700);
+		strcat(fileName, "/prefs");
+	}
 
 	cJSON *prefsJSON = cJSON_CreateObject();
 	cJSON_AddBoolToObject(prefsJSON, "showTimestamp", prefs->showTimestamp?1:0);
@@ -129,6 +151,7 @@ int SavePrefs(struct Prefs *prefs)
 	} else {
 		cJSON_AddNullToObject(prefsJSON, "discordBridgeName");
 	}
+	cJSON_AddBoolToObject(prefsJSON, "connectOnLaunch", prefs->connectOnLaunch?1:0);
 
 	char *prefsString = cJSON_Print(prefsJSON);
 	cJSON_Delete(prefsJSON);
