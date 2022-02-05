@@ -21,8 +21,9 @@
 #include "memberlist.h"
 #include "prefs.h"
 
-
+#ifndef MAX
 #define MAX(a,b) (a >= b ? a : b)
+#endif
 
 #pragma set woff 3970
 
@@ -31,6 +32,12 @@ String fallbacks[] = {
 	"*useSchemes: all",
 	"sgirc*XmList.fontList: -*-screen-medium-r-normal--12-*-*-*-*-*-*-*, -*-screen-bold-r-normal--12-*-*-*-*-*-*-*:UnreadChannel",
 	"sgirc*chatFont: -*-screen-medium-r-normal--12-*-*-*-*-*-*-*",
+	"sgirc*chatBGColor: black",
+	"sgirc*chatTextColor: white",
+	"sgirc*chatTimeColor: grey",
+	"sgirc*chatNickColor: blue",
+	"sgirc*chatBridgeColor: purple",
+	"sgirc*chatSelectionColor: orange",
 	NULL
 };
 
@@ -42,7 +49,7 @@ struct MemberList *MessageTargetMembers[MAX_MESSAGE_TARGETS];
 int MessageTargetHasUpdate[MAX_MESSAGE_TARGETS];
 
 static XtAppContext  app;
-static Widget window, chatList, channelList, namesList, scrollbar;
+static Widget window, chatList, channelList, namesList, scrollbar, titleField;
 static XFontStruct *chatFontStruct;
 static GC chatGC;
 static GC selectedGC;
@@ -62,18 +69,25 @@ static int selectStartOffset, selectEndOffset;
 static int copyOnNextDraw = 0;
 static char selectedText[1024];
 
-void SetupNamesList()
-{
+static Colormap chatColormap;
+static unsigned long chatBGColor;
+static unsigned long chatTextColor;
+static unsigned long chatTimeColor;
+static unsigned long chatNickColor;
+static unsigned long chatBridgeColor;
+static unsigned long chatSelectionColor;
+
+void SetupNamesList() {
 	XmListDeleteAllItems(namesList);
 
 	struct MemberList *memberList = MessageTargetMembers[currentTarget->index];
 	int addAt = 0;
 
+	// TODO: Replace all this with a sort...
+
 	// We'll do this lazily.. first, the ops
-	for (int i = 0; i < memberList->memberCount; i++)
-	{
-		if(memberList->members[i][0] == '@')
-		{
+	for (int i = 0; i < memberList->memberCount; i++) {
+		if(memberList->members[i][0] == '@') {
 			XmString str = XmStringCreate(memberList->members[i], "MSG");
 			XmListAddItemUnselected(namesList, str, addAt+1);
 			XmStringFree(str);
@@ -82,10 +96,8 @@ void SetupNamesList()
 	}
 
 	// ... and then the voiced ...
-	for (int i = 0; i < memberList->memberCount; i++)
-	{
-		if(memberList->members[i][0] == '+')
-		{
+	for (int i = 0; i < memberList->memberCount; i++) {
+		if(memberList->members[i][0] == '+') {
 			XmString str = XmStringCreate(memberList->members[i], "MSG");
 			XmListAddItemUnselected(namesList, str, addAt+1);
 			XmStringFree(str);
@@ -93,10 +105,8 @@ void SetupNamesList()
 		}
 	}
 	// ... and finally the plebes...
-	for (int i = 0; i < memberList->memberCount; i++)
-	{
-		if(memberList->members[i][0] != '@' && memberList->members[i][0] != '+')
-		{
+	for (int i = 0; i < memberList->memberCount; i++) {
+		if(memberList->members[i][0] != '@' && memberList->members[i][0] != '+') {
 			XmString str = XmStringCreate(memberList->members[i], "MSG");
 			XmListAddItemUnselected(namesList, str, addAt+1);
 			XmStringFree(str);
@@ -109,36 +119,30 @@ void SetupChannelList()
 {
 	XmListDeleteAllItems(channelList);
 
-	for (int i = 0; i < NumMessageTargets; i++)
-	{
+	for (int i = 0; i < NumMessageTargets; i++) {
 		XmString str = XmStringCreate(MessageTargets[i].title, MessageTargetHasUpdate[i]?"UnreadChannel":"ReadChannel");
 		XmListAddItemUnselected(channelList, str, i+1);
 		XmStringFree(str);
 	}
 
 }
-void RefreshChannelList()
-{
-	for (int i = 0; i < NumMessageTargets; i++)
-	{
+void RefreshChannelList() {
+	for (int i = 0; i < NumMessageTargets; i++) {
 		int wasSelected = XmListPosSelected(channelList, i+1);
 
 		XmString str = XmStringCreate(MessageTargets[i].title, MessageTargetHasUpdate[i]?"UnreadChannel":"ReadChannel");
 		XmListReplaceItemsPos(channelList, &str, 1, i+1);
 		XmStringFree(str);
 
-		if(wasSelected)
-		{
+		if(wasSelected) {
 			XmListSelectPos(channelList, i+1, FALSE);
 		}
 	}
 }
 
 
-void forceRedraw()
-{
-	if (chatList && XtDisplay(chatList) && XtWindow(chatList))
-	{
+void forceRedraw() {
+	if (chatList && XtDisplay(chatList) && XtWindow(chatList)) {
 		XClearArea(XtDisplay(chatList), XtWindow(chatList), 0, 0, 0, 0, True);
 	}
 
@@ -151,17 +155,14 @@ void forceRedraw()
 	*/
 }
 
-char *removeControlCodes(char *in)
-{
+char *removeControlCodes(char *in) {
 	if(in == NULL) return strdup("");
 
 	char *out = (char *)malloc(strlen(in)+1);
 	int outAt = 0;
 
-	for(int i = 0; i < strlen(in); i++)
-	{
-		if(in[i] == 0x03)
-		{
+	for(int i = 0; i < strlen(in); i++) {
+		if(in[i] == 0x03) {
 			i+=2;
 		} else if(in[i] >= 0x01 && in[i] <= 0x0f) {
 			// do nothing
@@ -175,8 +176,7 @@ char *removeControlCodes(char *in)
 	return out;
 }
 
-int calcMessageBreaks(char *line, int usableWidth, int index)
-{
+int calcMessageBreaks(char *line, int usableWidth, int index) {
 	int numLines = 0;
 
 	int linelen = strlen(line);
@@ -185,14 +185,12 @@ int calcMessageBreaks(char *line, int usableWidth, int index)
 	int lastspace = -1;
 	int endoftext;
 
-	while(linestart < linelen)
-	{
+	while(linestart < linelen) {
 		lastspace = 0;
 		linewidth = 0;
 		endoftext = 0;
 
-		while(XTextWidth(chatFontStruct, &line[linestart], linewidth) < usableWidth)
-		{
+		while(XTextWidth(chatFontStruct, &line[linestart], linewidth) < usableWidth) {
 			linewidth++;
 			if(line[linestart+linewidth] == ' ') lastspace = linewidth;
 			if(linewidth+linestart >= linelen) {
@@ -201,8 +199,7 @@ int calcMessageBreaks(char *line, int usableWidth, int index)
 			}
 		}
 
-		if(endoftext)
-		{
+		if(endoftext) {
 			// do nothing
 		} else if(lastspace > 0) {
 			linewidth = lastspace+1;
@@ -222,8 +219,7 @@ int calcMessageBreaks(char *line, int usableWidth, int index)
 	return numLines;
 }
 
-int recalculateMessageBreaks()
-{
+int recalculateMessageBreaks() {
 	Dimension chatWidth;
 	int i;
 	int totalLines;
@@ -232,29 +228,24 @@ int recalculateMessageBreaks()
 
 	XtVaGetValues(chatList, XmNwidth, &chatWidth, NULL);
 
-	if(currentTarget == NULL)
-	{
+	if(currentTarget == NULL) {
 		return 0;
 	}
 
-	for (i = 0; i < currentTarget->messageAt; i++)
-	{
+	for (i = 0; i < currentTarget->messageAt; i++) {
 		int usableWidth = chatWidth - (((currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL)?textOffset:nameOffset)+20);
 		char *filteredMessage = removeControlCodes(currentTarget->messages[i]->message);
 		int alreadyCounted = 0;
 
-		if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName))
-		{
+		if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
 			char *firstSpace = strchr(filteredMessage, ' ');
-			if(firstSpace)
-			{
+			if(firstSpace) {
 				firstSpace++;
 				totalLines += calcMessageBreaks(firstSpace, usableWidth, i);
 				alreadyCounted = 1;
 			}
 		}
-		if(!alreadyCounted)
-		{
+		if(!alreadyCounted) {
 			totalLines += calcMessageBreaks(filteredMessage, usableWidth, i);
 		}
 
@@ -263,8 +254,7 @@ int recalculateMessageBreaks()
 	return totalLines;
 }
 
-void recalculateBreaksAndScrollBar()
-{
+void recalculateBreaksAndScrollBar() {
 	Dimension curHeight;
 	int windowHeight, chatHeight, totalLines;
 
@@ -278,8 +268,7 @@ void recalculateBreaksAndScrollBar()
 	forceRedraw();
 }
 
-void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_data)
-{
+void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_data) {
 	char *newtext = XmTextFieldGetString(textField);
 
 	if (!newtext || !*newtext) {
@@ -287,8 +276,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		return;
 	}
 
-	if(currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL && newtext[0] != '/')
-	{
+	if(currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL && newtext[0] != '/') {
 		char fullmessage[4096];
 		snprintf(fullmessage, 4095, "PRIVMSG %s :%s", currentTarget->title, newtext);
 		sendIRCCommand(fullmessage);
@@ -312,10 +300,8 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		
 		if (*start == '/') start++;
 
-		if(strstr(start, "CLOSE") == start || strstr(start, "close") == start)
-		{
-			if (currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL)
-			{
+		if(strstr(start, "CLOSE") == start || strstr(start, "close") == start) {
+			if (currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL) {
 				char buffer[1024];
 				snprintf(buffer, 1023, "PART %s", currentTarget->title);
 				sendIRCCommand(buffer);
@@ -323,11 +309,9 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 
 			int removingIndex = currentTarget->index;
 			int newCount = RemoveMessageTarget(currentTarget);
-			if(newCount >= 0)
-			{
+			if(newCount >= 0) {
 				MemberListFree(MessageTargetMembers[removingIndex]);
-				for(int i = removingIndex; i < newCount; i++)
-				{
+				for(int i = removingIndex; i < newCount; i++) {
 					MessageTargetMembers[i] = MessageTargetMembers[i+1];
 				}
 			}
@@ -336,23 +320,18 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 			skipSendingCommand = 1;
 		}
 
-		if(strstr(start, "JOIN ") == start || strstr(start, "join ") == start)
-		{
+		if(strstr(start, "JOIN ") == start || strstr(start, "join ") == start) {
 			int index = AddMessageTarget(start+5, start+5, MESSAGETARGET_CHANNEL);
-			if (index >= 0)
-			{
+			if (index >= 0) {
 				MessageTargetMembers[index] = MemberListInit();
 			}
 			SetupChannelList();
 		}
-		if(strstr(start, "PART") == start || strstr(start, "part") == start)
-		{
-			if (currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL)
-			{
+		if(strstr(start, "PART") == start || strstr(start, "part") == start) {
+			if (currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL) {
 				char buffer[1024];
 
-				if(start[4] == ' ' && start[5] != ' ' && start[5] != 0 && start[5] != '#' && start[5] != '!' && start[5] != '&')
-				{
+				if(start[4] == ' ' && start[5] != ' ' && start[5] != 0 && start[5] != '#' && start[5] != '!' && start[5] != '&') {
 					snprintf(buffer, 1023, "PART %s :%s", currentTarget->title, start+5);
 				} else {
 					snprintf(buffer, 1023, "PART %s", currentTarget->title);
@@ -361,11 +340,9 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 
 				int removingIndex = currentTarget->index;
 				int newCount = RemoveMessageTarget(currentTarget);
-				if(newCount >= 0)
-				{
+				if(newCount >= 0) {
 					MemberListFree(MessageTargetMembers[removingIndex]);
-					for(int i = removingIndex; i < newCount; i++)
-					{
+					for(int i = removingIndex; i < newCount; i++) {
 						MessageTargetMembers[i] = MessageTargetMembers[i+1];
 					}
 				}
@@ -374,15 +351,13 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 			}
 			skipSendingCommand = 1;
 		}
-		if(strstr(start, "MSG") == start || strstr(start, "msg") == start)
-		{
+		if(strstr(start, "MSG") == start || strstr(start, "msg") == start) {
 			
 			char *firstSpace = strchr(start+4, ' ');
 			char *target = NULL;
 			char *text = NULL;
 			
-			if(firstSpace)
-			{
+			if(firstSpace) {
 				struct MessageTarget *msgTarget;
 				char fullmessage[4096];
 
@@ -396,24 +371,20 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 				skipSendingCommand = 1;
 				
 				msgTarget = FindMessageTargetByName(target);
-				if(!msgTarget)
-				{
+				if(!msgTarget) {
 					int index = AddMessageTarget(target, target, MESSAGETARGET_WHISPER);
-					if (index >= 0)
-					{
+					if (index >= 0) {
 						MessageTargetMembers[index] = MemberListInit();
 						msgTarget = FindMessageTargetByName(target);
 						SetupChannelList();
 					}
 				}
-				if(msgTarget)
-				{
+				if(msgTarget) {
 
 					struct Message *message = MessageInit(nick, target, text);
 					AddMessageToTarget(msgTarget, message);
 
-					if(msgTarget == currentTarget)
-					{
+					if(msgTarget == currentTarget) {
 						recalculateBreaksAndScrollBar();
 					}
 				}	
@@ -422,8 +393,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		
 		}
 
-		if(!skipSendingCommand)
-		{
+		if(!skipSendingCommand) {
 			sendIRCCommand(start);
 		}
 	}
@@ -432,56 +402,47 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 	XmTextFieldSetString(textField, "");
 }
 
-void switchToMessageTarget(struct MessageTarget *target)
-{
+void switchToMessageTarget(struct MessageTarget *target) {
 	currentTarget = target;
 	recalculateBreaksAndScrollBar();
 	SetupNamesList();
 	MessageTargetHasUpdate[target->index] = 0;
 	RefreshChannelList();
+
+	XmTextFieldSetString(titleField, target->topic?target->topic:target->title);
 }
 
-void channelSelectedCallback(Widget chanList, XtPointer userData, XtPointer callData)
-{
-	for (int i = 0; i < NumMessageTargets; i++)
-	{
-		if (XmListPosSelected(chanList, i+1))
-		{
+void channelSelectedCallback(Widget chanList, XtPointer userData, XtPointer callData) {
+	for (int i = 0; i < NumMessageTargets; i++) {
+		if (XmListPosSelected(chanList, i+1)) {
 			switchToMessageTarget(&MessageTargets[i]);
 			return;
 		}
 	}
-
 }
 
 
 // IRC Client Callbacks
-void ircClientUpdateCallback(struct Message *message, void *userdata)
-{
+void ircClientUpdateCallback(struct Message *message, void *userdata) {
 	struct MessageTarget *target;
 	char *actualTarget = message->target;
-	if(!strcmp(actualTarget, nick))
-	{
+	if(!strcmp(actualTarget, nick)) {
 		actualTarget = message->source;
 	}
 	target = FindMessageTargetByName(actualTarget);
-	if(target == NULL && message->target != NULL)
-	{
+	if(target == NULL && message->target != NULL) {
 		int index = AddMessageTarget(actualTarget, actualTarget, MESSAGETARGET_WHISPER);
-		if (index >= 0)
-		{
+		if (index >= 0) {
 			MessageTargetMembers[index] = MemberListInit();
 			target = FindMessageTargetByName(actualTarget);
 			SetupChannelList();
 		}
 	}
 
-	if(target != NULL)
-	{
+	if(target != NULL) {
 		AddMessageToTarget(target, message);
 
-		if(target == currentTarget) 
-		{
+		if(target == currentTarget) {
 			recalculateBreaksAndScrollBar();
 		} else {
 			MessageTargetHasUpdate[target->index] = 1;
@@ -495,20 +456,18 @@ void ircClientUpdateCallback(struct Message *message, void *userdata)
 	}
 	
 }
-void ircClientChannelJoinCallback(char *channel, char *name, void *userdata)
-{
+void ircClientChannelJoinCallback(char *channel, char *name, void *userdata) {
 	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
-	if (messageTarget)
-	{
+	if (messageTarget) {
 		AddToMemberList(MessageTargetMembers[messageTarget->index], name);
-		if (messageTarget == currentTarget) SetupNamesList();
+		if (messageTarget == currentTarget) {
+			SetupNamesList();
+		}
 	}	
 }
-void ircClientChannelPartCallback(char *channel, char *name, char *partMessage, void *userdata)
-{
+void ircClientChannelPartCallback(char *channel, char *name, char *partMessage, void *userdata) {
 	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
-	if (messageTarget)
-	{
+	if (messageTarget) {
 		char buffer[1024];
 		snprintf(buffer, 1023, "** %s has left %s (%s)", name, channel, partMessage?partMessage:"no message");
 		struct Message *message = MessageInit(name, messageTarget->title, buffer);
@@ -516,15 +475,14 @@ void ircClientChannelPartCallback(char *channel, char *name, char *partMessage, 
 		AddMessageToTarget(messageTarget, message);
 
 		RemoveFromMemberList(MessageTargetMembers[messageTarget->index], name);
-		if (messageTarget == currentTarget) SetupNamesList();
+		if (messageTarget == currentTarget) {
+			SetupNamesList();
+		}
 	}	
 }
-void ircClientChannelQuitCallback(char *name, char *quitMessage, void *userdata)
-{
-	for(int i = 0; i < NumMessageTargets; i++)
-	{
-		if(RemoveFromMemberList(MessageTargetMembers[i], name))
-		{
+void ircClientChannelQuitCallback(char *name, char *quitMessage, void *userdata) {
+	for(int i = 0; i < NumMessageTargets; i++) {
+		if(RemoveFromMemberList(MessageTargetMembers[i], name)) {
 			struct MessageTarget *messageTarget = &MessageTargets[i];
 			char buffer[1024];
 			snprintf(buffer, 1023, "** %s has quit (%s)", name, quitMessage?quitMessage:"no message");
@@ -532,45 +490,52 @@ void ircClientChannelQuitCallback(char *name, char *quitMessage, void *userdata)
 			message->type = MESSAGE_TYPE_SERVERMESSAGE;
 			AddMessageToTarget(messageTarget, message);
 
-			if (messageTarget == currentTarget) SetupNamesList();
+			if (messageTarget == currentTarget) {
+				SetupNamesList();
+			}
 		}	
 	}
 }
+void ircClientChannelTopicCallback(char *channel, char *topic, void *userdata) {
+	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
+	if (messageTarget) {
 
-void updateTimerCallback(XtPointer clientData, XtIntervalId *timer)
-{
+		SetMessageTargetTopic(messageTarget, topic);
+		if (messageTarget == currentTarget) {
+			XmTextFieldSetString(titleField, topic);
+		}
+	}	
+}
+
+
+void updateTimerCallback(XtPointer clientData, XtIntervalId *timer) {
 	XtAppContext * app = (XtAppContext *)clientData;
 
-	updateIRCClient(ircClientUpdateCallback, ircClientChannelJoinCallback, ircClientChannelPartCallback, ircClientChannelQuitCallback, (void *)chatList);
+	updateIRCClient(ircClientUpdateCallback, ircClientChannelJoinCallback, ircClientChannelPartCallback, ircClientChannelQuitCallback, ircClientChannelTopicCallback, (void *)chatList);
 
 	XtAppAddTimeOut(*app, 50, updateTimerCallback, app);
 }
 	
 
-void chatListResizeCallback(Widget widget, XtPointer client_data, XtPointer call_data)
-{
+void chatListResizeCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	recalculateBreaksAndScrollBar();
 }
 
-void scrollbarChangedCallback(Widget widget, XtPointer client_data, XtPointer call_data)
-{
+void scrollbarChangedCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	forceRedraw();
 }
 
 static Boolean convertSelectionCallback(Widget widget, Atom *selection, Atom *target,
                                  Atom *type_return, XtPointer *value_return,
                                  unsigned long *length_return,
-                                 int *format_return)
-{
+                                 int *format_return) {
 	char *buf;
 
-	if (widget != chatList || *selection != XA_PRIMARY)
-	{
+	if (widget != chatList || *selection != XA_PRIMARY) {
 		return (False);
 	}
 
-	if (*target != XA_STRING && *target != XInternAtom(XtDisplay(chatList), "TEXT", TRUE))
-	{
+	if (*target != XA_STRING && *target != XInternAtom(XtDisplay(chatList), "TEXT", TRUE)) {
 		return False;
 	}
 
@@ -584,8 +549,7 @@ static Boolean convertSelectionCallback(Widget widget, Atom *selection, Atom *ta
 	return (True);
 }
 
-static void loseSelectionCallback(Widget w, Atom *selection)
-{
+static void loseSelectionCallback(Widget w, Atom *selection) {
 	selectStartX = -1;
 	selectStartY = -1;
 	selectEndX = -1;
@@ -593,20 +557,16 @@ static void loseSelectionCallback(Widget w, Atom *selection)
 	forceRedraw();
 }
 
-int processForDiscordBridge(char *buffer, const char *line, int *linestart)
-{
-	if(line[0] != '<')
-	{
+int processForDiscordBridge(char *buffer, const char *line, int *linestart) {
+	if(line[0] != '<') {
 		return 0;
 	}
 
 	char *nameClose = strstr(line, "> ");
-	if(nameClose)
-	{
-		if(buffer)
-		{
+	if(nameClose) {
+		if(buffer) {
 			nameClose[1] = 0;
-			snprintf(buffer, 255, "<%s>", line);
+			snprintf(buffer, 255, "%s", line);
 			nameClose[1] = ' ';
 		}
 		*linestart = (nameClose-line)+2;
@@ -616,8 +576,7 @@ int processForDiscordBridge(char *buffer, const char *line, int *linestart)
 	}
 }
 
-void updateSelectionIndices()
-{
+void updateSelectionIndices() {
 	Display *display = XtDisplay(chatList);
 	Drawable window = XtWindow(chatList);
 	Dimension curWidth = 0, curHeight = 0;
@@ -631,8 +590,7 @@ void updateSelectionIndices()
 	int nameOffset = prefs.showTimestamp ? 64 : 4;
 	int textOffset = prefs.showTimestamp ? 180 : 120;
 
-	if(currentTarget == NULL)
-	{
+	if(currentTarget == NULL) {
 		return;
 	}
 
@@ -643,51 +601,42 @@ void updateSelectionIndices()
 
 	selectedText[0] = 0;
 
-	for(i = 0; i < currentTarget->messageAt; i++)
-	{
+	for(i = 0; i < currentTarget->messageAt; i++) {
 		int linestart = 0;
 		int linewidth = 0;
 		char *line = removeControlCodes(currentTarget->messages[i]->message);
 		int linelen = strlen(line);
 
-		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL)
-		{
-			if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName))
-			{
+		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
+			if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
 				processForDiscordBridge(NULL, line, &linestart);
 			}
 		}
 
-		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++)
-		{
+		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
 			int offset = (currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
 			int yline = (y+scrollValue-12)/12;
 
-			if(yline > selectEndLine)
-			{
+			if(yline > selectEndLine) {
 				break;
 			}
 
 			linewidth = LineBreaksPerMessage[i][lineOfMessage];
 
-			if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX))
-			{
+			if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX)) {
 				int preSel = 0;
 				int preSelW = 0;
 				int postSel = 0;
 				int postSelW = 0;
 
-				if(yline == selectStartLine && yline == selectEndLine)
-				{
-					while(offset+XTextWidth(chatFontStruct, &line[linestart], preSel) < 	selectStartX && preSel < linewidth)
-					{
+				if(yline == selectStartLine && yline == selectEndLine) {
+					while(offset+XTextWidth(chatFontStruct, &line[linestart], preSel) < 	selectStartX && preSel < linewidth) {
 						preSel++;
 					}
 					if(preSel > 0) preSel--;
 					preSelW = XTextWidth(chatFontStruct, &line[linestart], preSel);
 					postSel = preSel;
-					while(offset+XTextWidth(chatFontStruct, &line[linestart], postSel) < selectEndX && postSel < linewidth)
-					{
+					while(offset+XTextWidth(chatFontStruct, &line[linestart], postSel) < selectEndX && postSel < linewidth) {
 						postSel++;
 					}
 					postSelW = XTextWidth(chatFontStruct, &line[linestart], postSel);
@@ -697,8 +646,7 @@ void updateSelectionIndices()
 					selectEndIndex = postSel;
 					selectEndOffset = postSelW;
 				} else if(yline == selectStartLine) {
-					while(offset+XTextWidth(chatFontStruct, &line[linestart], preSel) < selectStartX && preSel < linewidth)
-					{
+					while(offset+XTextWidth(chatFontStruct, &line[linestart], preSel) < selectStartX && preSel < linewidth) {
 						preSel++;
 					}
 					if(preSel > 0) preSel--;
@@ -707,8 +655,7 @@ void updateSelectionIndices()
 					selectStartIndex = preSel;
 					selectStartOffset = preSelW;
 				} else if(yline == selectEndLine) {
-					while(offset+XTextWidth(chatFontStruct, &line[linestart], preSel) < selectEndX && preSel < linewidth)
-					{
+					while(offset+XTextWidth(chatFontStruct, &line[linestart], preSel) < selectEndX && preSel < linewidth) {
 						preSel++;
 					}
 					preSelW = XTextWidth(chatFontStruct, &line[linestart], preSel);
@@ -725,15 +672,13 @@ void updateSelectionIndices()
 	}
 }
 
-void captureSelection()
-{
+void captureSelection() {
 	Position y = 12;
 	int scrollValue;
 	int i;
 	int curLen = 0;
 
-	if(currentTarget == NULL)
-	{
+	if(currentTarget == NULL) {
 		return;
 	}
 
@@ -742,63 +687,52 @@ void captureSelection()
 
 	selectedText[0] = 0;
 
-	for(i = 0; i < currentTarget->messageAt; i++)
-	{
+	for(i = 0; i < currentTarget->messageAt; i++) {
 		int linestart = 0;
 		int linewidth = 0;
 		char *line = removeControlCodes(currentTarget->messages[i]->message);
 		int linelen = strlen(line);
 
-		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL)
-		{
-			if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName))
-			{
+		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
+			if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
 				processForDiscordBridge(NULL, line, &linestart);
 			}
 		}
 
-		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++)
-		{
+		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
 			int yline = (y+scrollValue-12)/12;
 
-			if(yline > selectEndLine)
-			{
+			if(yline > selectEndLine) {
 				break;
 			}
 
 			linewidth = LineBreaksPerMessage[i][lineOfMessage];
 
-			if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX))
-			{
-				if(yline == selectStartLine && yline == selectEndLine)
-				{
+			if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX)) {
+				if(yline == selectStartLine && yline == selectEndLine) {
 					int newLen = selectEndIndex-selectStartIndex;
-					if(curLen+newLen < 1023)
-					{
+					if(curLen+newLen < 1023) {
 						memcpy(selectedText+curLen, &line[linestart+selectStartIndex], newLen);
 						selectedText[curLen+newLen] = 0;
 						curLen += newLen;
 					}
 				} else if(yline == selectStartLine) {
 					int newLen = linewidth-selectStartIndex;
-					if(curLen+newLen < 1023)
-					{
+					if(curLen+newLen < 1023) {
 						memcpy(selectedText+curLen, &line[linestart+selectStartIndex], newLen);
 						selectedText[curLen+newLen] = 0;
 						curLen += newLen;
 					}
 				} else if(yline == selectEndLine) {
 					int newLen = selectEndIndex;
-					if(curLen+newLen < 1023)
-					{
+					if(curLen+newLen < 1023) {
 						memcpy(selectedText+curLen, &line[linestart], newLen);
 						selectedText[curLen+newLen] = 0;
 						curLen += newLen;
 					}
 				} else if(yline > selectStartLine && yline < selectEndLine){
 					int newLen = linewidth;
-					if(curLen+newLen < 1023)
-					{
+					if(curLen+newLen < 1023) {
 						memcpy(selectedText+curLen, &line[linestart], newLen);
 						selectedText[curLen+newLen] = 0;
 						curLen += newLen;
@@ -812,10 +746,7 @@ void captureSelection()
 		free(line);
 	}
 
-	if(strlen(selectedText) > 1)
-	{
-//		int status;
-//		long id = 0;
+	if(strlen(selectedText) > 1) {
 		Time t = XtLastTimestampProcessed(XtDisplay(chatList));
 
 		int result = XtOwnSelection(chatList, XA_PRIMARY, t, convertSelectionCallback, loseSelectionCallback, NULL);
@@ -823,8 +754,7 @@ void captureSelection()
 }
 
 
-void drawChatList()
-{
+void drawChatList() {
 	Display *display = XtDisplay(chatList);
 	Drawable window = XtWindow(chatList);
 	Dimension curWidth = 0, curHeight = 0;
@@ -840,8 +770,7 @@ void drawChatList()
 	int nameOffset = prefs.showTimestamp ? 64 : 4;
 	int textOffset = prefs.showTimestamp ? 180 : 120;
 
-	if(currentTarget == NULL)
-	{
+	if(currentTarget == NULL) {
 		return;
 	}
 
@@ -850,69 +779,65 @@ void drawChatList()
 
 	y -= scrollValue;
 
-	if(copyOnNextDraw)
-	{
+	if(copyOnNextDraw) {
 		selectedText[0] = 0;
 	}
 
-	for(i = 0; i < currentTarget->messageAt; i++)
-	{
+	for(i = 0; i < currentTarget->messageAt; i++) {
 		int linestart = 0;
 		int linewidth = 0;
 		char *line = removeControlCodes(currentTarget->messages[i]->message);
 		int linelen = strlen(line);
 		int isBridge = 0;
 
-		if(y > -12)
-		{
-			if(prefs.showTimestamp)
-			{
+		if(y > -12) {
+			if(prefs.showTimestamp) {
+				XSetForeground(display, gc, chatTimeColor);
+
 				XDrawString(display, window, gc, 4, y, currentTarget->messages[i]->timestampString, strlen(currentTarget->messages[i]->timestampString));
 			}
 
 
-			if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL)
-			{
-				if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName))
-				{
+			if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
+				if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
 					isBridge = processForDiscordBridge(buffer, line, &linestart);
 				}
-				if(!isBridge)
-				{
+				if(!isBridge) {
 					snprintf(buffer, 255, "<%s>", currentTarget->messages[i]->source);
 				}
 
-				if(strlen(buffer) > 16)
-				{
-					if(isBridge)
-					{
+				if(strlen(buffer) > 16) {
+					if(isBridge) {
 						buffer[14] = '>';
 					}
 					buffer[15] = '>';
 					buffer[16] = 0;
 				}
+				if(isBridge) {
+					XSetForeground(display, gc, chatBridgeColor);
+				} else {
+					XSetForeground(display, gc, chatNickColor);
+				}
 				XDrawString(display, window, gc, nameOffset, y, buffer, strlen(buffer));
 			}
 		}
 
-		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++)
-		{
+		XSetForeground(display, gc, chatTextColor);
+
+		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
 			int offset = (currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
 			int yline = (y+scrollValue-12)/12;
 			int drewLine = 0;
 			linewidth = LineBreaksPerMessage[i][lineOfMessage];
 
-			if(y > -12)
-			{
-				if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX))
-				{
+			if(y > -12) {
+				if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX)) {
 					int preSel = selectStartIndex;
 					int preSelW = selectStartOffset;
 					int postSel = selectEndIndex;
 					int postSelW = selectEndOffset;
 
-					if(yline == selectStartLine && yline == selectEndLine)
-					{
+					if(yline == selectStartLine && yline == selectEndLine) {
 						XDrawString(display, window, gc, offset, y, &line[linestart], preSel);
 						XDrawImageString(display, window, selectedGC, offset+preSelW, y, 	&line[linestart+preSel], postSel-preSel);
 						XDrawString(display, window, gc, offset+postSelW, y, &line[linestart+postSel], linewidth-postSel);
@@ -938,8 +863,7 @@ void drawChatList()
 			linestart += linewidth;
 			y += 12;
 
-			if(y > curHeight+20)
-			{
+			if(y > curHeight+20) {
 				break;
 			}
 				
@@ -948,23 +872,19 @@ void drawChatList()
 	}
 }
 
-void chatListRedrawCallback(Widget widget, XtPointer client_data, XtPointer call_data)
-{
+void chatListRedrawCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	drawChatList();
 }
 
-void selection(Widget widget, XEvent *event, String *args, Cardinal *num_args)
-{
+void selection(Widget widget, XEvent *event, String *args, Cardinal *num_args) {
 	int scrollValue;
 	XtVaGetValues (scrollbar, XmNvalue, &scrollValue, NULL);
 
-	if(*num_args != 1)
-	{
+	if(*num_args != 1) {
 		return;
 	}
 
-	if(strcmp(args[0], "start"))
-	{
+	if(strcmp(args[0], "start")) {
 		// If it's not start, it's either move or end
 		selectEndX = event->xbutton.x;
 		selectEndY = event->xbutton.y+scrollValue;
@@ -977,16 +897,14 @@ void selection(Widget widget, XEvent *event, String *args, Cardinal *num_args)
 
 	updateSelectionIndices();
 
-	if(!strcmp(args[0], "stop"))
-	{
+	if(!strcmp(args[0], "stop")) {
 		captureSelection();
 	}
 
 	forceRedraw();
 }
 
-char *stringFromXmString(XmString xmString)
-{
+char *stringFromXmString(XmString xmString) {
 	XmStringContext context;
 	char buffer[1024];
 	char *text;
@@ -997,13 +915,11 @@ char *stringFromXmString(XmString xmString)
 	unsigned char *unknownData;
 	XmStringComponentType type;
 
-	if(!XmStringInitContext(&context, xmString))
-	{
+	if(!XmStringInitContext(&context, xmString)) {
 		return strdup("");
 	}
 	buffer[0] = 0;
-	while((type = XmStringGetNextComponent(context, &text, &charset, &direction, &unknownTag, &unknownLen, &unknownData)) != XmSTRING_COMPONENT_END)
-	{
+	while((type = XmStringGetNextComponent(context, &text, &charset, &direction, &unknownTag, &unknownLen, &unknownData)) != XmSTRING_COMPONENT_END) {
 		if(type == XmSTRING_COMPONENT_TEXT || type == XmSTRING_COMPONENT_LOCALE_TEXT) {
 			if(strlen(buffer)+strlen(text) > 1023) {
 				XtFree(text);
@@ -1022,8 +938,7 @@ char *stringFromXmString(XmString xmString)
 	return strdup(buffer);
 }
 
-void connectAndSetNick(char *server, int port, char *nick)
-{
+void connectAndSetNick(char *server, int port, char *nick) {
 	disconnectFromServer();
 	RemoveAllMessageTargets();
 	AddMessageTarget(SERVER_TARGET, server, MESSAGETARGET_SERVER);
@@ -1041,8 +956,7 @@ void connectAndSetNick(char *server, int port, char *nick)
 	sendIRCCommand(connbuffer);
 }
 
-void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
-{
+void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	XmSelectionBoxCallbackStruct *cbs;
 	cbs = (XmSelectionBoxCallbackStruct *)call_data;
 	char *server = stringFromXmString(cbs->value);
@@ -1064,8 +978,7 @@ void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer cal
 	free(server);
 }
 
-void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
-{
+void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	XmSelectionBoxCallbackStruct *cbs;
 	cbs = (XmSelectionBoxCallbackStruct *)call_data;
 	char *newnick = stringFromXmString(cbs->value);
@@ -1086,13 +999,11 @@ void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data)
 
 }
 
-void closeDialogCallback(Widget widget, XtPointer client_data, XtPointer call_data)
-{
+void closeDialogCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	XtDestroyWidget(XtParent(widget));
 }
 
-void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call_data)
-{
+void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	// client_data is an int for index of menu item
 	switch((int)client_data) {
 	case 0:	// Connect...
@@ -1149,8 +1060,7 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 	}
 }
 
-void printUsage()
-{
+void printUsage() {
 	printf("Usage: sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>] [-c]\n");
 	printf("\t-n: Set nick to use\n");
 	printf("\t-s: Set server to connect to\n");
@@ -1160,14 +1070,12 @@ void printUsage()
 	printf("\n");
 }
 
-void addServerConnection(char *server, int port, char *nick)
-{
+void addServerConnection(char *server, int port, char *nick) {
 	connectAndSetNick(server,  port>0?port:6667, nick);
 }
 
 
-int main(int argc, char** argv) 
-{
+int main(int argc, char** argv) {
 	Widget      	textField, formLayout, mainWindow, menubar;
 	Arg         	args[32];
 	int         	n = 0;
@@ -1187,10 +1095,8 @@ int main(int argc, char** argv)
 	selectEndX = -1;
 	selectEndY = -1;
 
-	while((cmdOption = getopt(argc, argv, "s:p:n:f:c")) != -1)
-	{
-		switch(cmdOption)
-		{
+	while((cmdOption = getopt(argc, argv, "s:p:n:f:c")) != -1) {
+		switch(cmdOption) {
 		case 's':
 			cmdServer = strdup(optarg);
 			break;
@@ -1216,8 +1122,7 @@ int main(int argc, char** argv)
 
 	NumMessageTargets = 0;
 
-	if(cmdNick)
-	{
+	if(cmdNick) {
 		nick = strdup(cmdNick);
 	} else if(prefs.defaultNick) {
 		nick = strdup(prefs.defaultNick);
@@ -1283,12 +1188,15 @@ int main(int argc, char** argv)
 	namesList = XmCreateScrolledList(formLayout, "namesList", args, n);
 	XtManageChild(namesList);
 
+	titleField = XtVaCreateManagedWidget("titleField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_WIDGET, XmNleftWidget, channelList, XmNrightAttachment, XmATTACH_WIDGET, XmNrightWidget, namesList, XmNtopAttachment, XmATTACH_FORM, XmNeditable, 0, NULL);
+
 	textField = XtVaCreateManagedWidget("textField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_WIDGET, XmNleftWidget, channelList, XmNrightAttachment, XmATTACH_WIDGET, XmNrightWidget, namesList, XmNbottomAttachment, XmATTACH_FORM, NULL);
 
 	n = 0;
 	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNbottomWidget, textField); n++;
-	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, titleField); n++;
 	XtSetArg(args[n], XmNrightAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNrightWidget, namesList); n++;
 	XtSetArg(args[n], XmNresizable, 0); n++;
@@ -1296,11 +1204,73 @@ int main(int argc, char** argv)
 	scrollbar = XmCreateScrollBar(formLayout, "scrollbar", args, n);
 	XtManageChild(scrollbar);
 
+	Display *display = XtDisplay(formLayout);
+	Screen *screen = XtScreen(formLayout);
+	chatColormap = XCreateColormap(display, RootWindowOfScreen(screen), DefaultVisualOfScreen(screen), AllocNone);
+	{
+
+		XrmInitialize();
+		XrmDatabase xrdb = XrmGetDatabase(display);
+		if(!xrdb) {
+			printf("NULL xrdb\n");
+			return 0;
+		}
+		char *strtype = NULL;
+		XrmValue value;
+
+		
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatFont", "Sgirc.Chatlist.ChatFont", &strtype, &value)) {
+			chatFontStruct = XLoadQueryFont(display, value.addr);
+		} else {
+			chatFontStruct = XLoadQueryFont(display, "-*-screen-medium-r-normal--12-*-*-*-*-*-*-*");
+		}
+
+		chatBGColor = BlackPixelOfScreen(screen);
+		chatTextColor = WhitePixelOfScreen(screen);
+		chatTimeColor = WhitePixelOfScreen(screen);
+		chatNickColor = WhitePixelOfScreen(screen);
+		chatBridgeColor = WhitePixelOfScreen(screen);
+		chatSelectionColor = WhitePixelOfScreen(screen);
+
+		XColor c, e;
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatBGColor", "Sgirc.Chatlist.ChatBackgroundColor", &strtype, &value)) {
+			if(XAllocNamedColor(display, chatColormap, value.addr, &c, &e)) {
+				chatBGColor = c.pixel;
+			}
+		}
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatTextColor", "Sgirc.Chatlist.ChatTextColor", &strtype, &value)) {
+			if(XAllocNamedColor(display, chatColormap, value.addr, &c, &e)) {
+				chatTextColor = c.pixel;
+			}
+		}
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatTimeColor", "Sgirc.Chatlist.ThatTimeColor", &strtype, &value)) {
+			if(XAllocNamedColor(display, chatColormap, value.addr, &c, &e)) {
+				chatTimeColor = c.pixel;
+			}
+		}
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatNickColor", "Sgirc.Chatlist.ChatNickColor", &strtype, &value)) {
+			if(XAllocNamedColor(display, chatColormap, value.addr, &c, &e)) {
+				chatNickColor = c.pixel;
+			}
+		}
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatBridgeColor", "Sgirc.Chatlist.ChatBridgeColor", &strtype, &value)) {
+			if(XAllocNamedColor(display, chatColormap, value.addr, &c, &e)) {
+				chatBridgeColor = c.pixel;
+			}
+		}
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatSelectionColor", "Sgirc.Chatlist.ChatSelectionColor", &strtype, &value)) {
+			if(XAllocNamedColor(display, chatColormap, value.addr, &c, &e)) {
+				chatSelectionColor = c.pixel;
+			}
+		}
+	}
+
 
 	n = 0;
 	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNbottomWidget, textField); n++;
-	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, titleField); n++;
 	XtSetArg(args[n], XmNleftAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNleftWidget, channelList); n++;
 	XtSetArg(args[n], XmNrightAttachment, XmATTACH_WIDGET); n++;
@@ -1311,7 +1281,8 @@ int main(int argc, char** argv)
 	XtSetArg(args[n], XmNwidth, 400); n++;
 	XtSetArg(args[n], XmNminWidth, 300); n++;
 	XtSetArg(args[n], XmNheight, 250); n++;
-
+	XtSetArg(args[n], XmNcolormap, chatColormap); n++;
+	XtSetArg(args[n], XmNbackground, chatBGColor); n++;
 
 	chatList = XmCreateDrawingArea(formLayout, "chatList", args, n);
 	XtManageChild(chatList);
@@ -1322,29 +1293,12 @@ int main(int argc, char** argv)
 	XtAddCallback(textField, XmNactivateCallback, textInputCallback, chatList);
 	XtAddCallback(channelList, XmNbrowseSelectionCallback, channelSelectedCallback,  NULL);
 
-
-	{
-		XrmInitialize();
-		XrmDatabase xrdb = XrmGetDatabase(XtDisplay(formLayout));
-		if(!xrdb)
-		{
-			printf("NULL xrdb\n");
-			return 0;
-		}
-		char *strtype = NULL;
-		XrmValue value;
-		if(XrmGetResource(xrdb, "sgirc.chatList.chatFont", "Sgirc.Chatlist.ChatFont", &strtype, &value))
-		{
-			chatFontStruct = XLoadQueryFont(XtDisplay(chatList), value.addr);
-		} else {
-			chatFontStruct = XLoadQueryFont(XtDisplay(chatList), "-*-screen-medium-r-normal--12-*-*-*-*-*-*-*");
-		}
-	}
-	gcv.foreground = BlackPixelOfScreen(XtScreen(chatList));
-	chatGC = XCreateGC(XtDisplay(chatList), RootWindowOfScreen(XtScreen(chatList)), GCForeground, &gcv);
+	gcv.foreground = chatTextColor;
+	gcv.background = chatBGColor;
+	chatGC = XCreateGC(XtDisplay(chatList), RootWindowOfScreen(XtScreen(chatList)), GCForeground|GCBackground, &gcv);
 	XSetFont(XtDisplay(chatList), chatGC, chatFontStruct->fid);
-	gcv.background = BlackPixelOfScreen(XtScreen(chatList));
-	gcv.foreground = WhitePixelOfScreen(XtScreen(chatList));
+	gcv.background = chatSelectionColor;
+	gcv.foreground = chatBGColor;
 	selectedGC = XCreateGC(XtDisplay(chatList), RootWindowOfScreen(XtScreen(chatList)), GCForeground|GCBackground, &gcv);
 	XSetFont(XtDisplay(chatList), selectedGC, chatFontStruct->fid);
 
@@ -1363,10 +1317,8 @@ int main(int argc, char** argv)
 	currentTarget = FindMessageTargetByName(SERVER_TARGET);
 	SetupChannelList();
 
-	if(cmdAutoConnect || prefs.connectOnLaunch)
-	{
-		if(cmdServer)
-		{
+	if(cmdAutoConnect || prefs.connectOnLaunch) {
+		if(cmdServer) {
 			addServerConnection(cmdServer, cmdPort?atoi(cmdPort):0, nick);
 		} else if(prefs.defaultServer) {
 			addServerConnection(prefs.defaultServer, prefs.defaultPort>0?prefs.defaultPort:6667, nick);
@@ -1377,6 +1329,3 @@ int main(int argc, char** argv)
 	return 0;
 }
 
-
-    
-				    

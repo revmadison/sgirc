@@ -3,26 +3,22 @@
 
 #include "message.h"
 
-struct Message *MessageInit(char *source, char *target, char *messageBody)
-{
+struct Message *MessageInit(char *source, char *target, char *messageBody) {
 	struct Message *message = (struct Message *)malloc(sizeof(struct Message));
 
-	if (source)
-	{
+	if (source) {
 		message->source = strdup(source);
 	} else {
 		message->source = NULL;
 	}	
 
-	if (target)
-	{
+	if (target) {
 		message->target =  strdup(target);
 	} else {
 		message->target = strdup("");
 	}
 
-	if (messageBody)
-	{
+	if (messageBody) {
 		message->message = strdup(messageBody);
 	} else {
 		message->message = strdup("");
@@ -36,11 +32,16 @@ struct Message *MessageInit(char *source, char *target, char *messageBody)
 	return message;
 }
 
-void MessageFree(struct Message *message)
-{
-	if (message->message) free(message->message);
-	if (message->target) free(message->target);
-	if (message->source) free(message->source);
+void MessageFree(struct Message *message) {
+	if (message->message) {
+		free(message->message);
+	}
+	if (message->target) {
+		free(message->target);
+	}
+	if (message->source) {
+		free(message->source);
+	}
 	free(message);
 }
 

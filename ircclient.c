@@ -27,8 +27,7 @@ char * commandBuffer;
 int commandBufferSize;
 int commandBufferAt;
 
-void initIRCClient()
-{
+void initIRCClient() {
 	activeSocket = -1;
 	connected = 0;
 
@@ -41,9 +40,10 @@ void initIRCClient()
 	commandBufferAt = 0;
 }
 
-void sendIRCCommand(const char *command)
-{
-	if (!connected) return;
+void sendIRCCommand(const char *command) {
+	if (!connected) {
+		return;
+	}
 #if DEBUG
 	printf("Sending: %s\n", command);
 #endif
@@ -51,15 +51,13 @@ void sendIRCCommand(const char *command)
 	send(activeSocket, "\r\n", 2, 0);
 }
 
-char *parseFirstWord(char *str, int *offset)
-{
+char *parseFirstWord(char *str, int *offset) {
 	char *start = str+*offset;
 	char *firstWord;
 	int newoff;
 
 	char *firstSpace = strchr(start, ' ');
-	if(firstSpace)
-	{
+	if (firstSpace) {
 		*firstSpace = 0;
 		firstWord = strdup(start);
 		*firstSpace = ' ';
@@ -74,25 +72,20 @@ char *parseFirstWord(char *str, int *offset)
 	return firstWord;
 }
 
-char *parseCommandFromMessage(char *srvmessage, int *offset)
-{
+char *parseCommandFromMessage(char *srvmessage, int *offset) {
 	return parseFirstWord(srvmessage, offset);
 }
 
-char *parseSourceFromMessage(char *srvmessage, int *offset)
-{
+char *parseSourceFromMessage(char *srvmessage, int *offset) {
 	char *start = srvmessage+*offset;
 	char *source = NULL;
 
-	if (*start == ':')
-	{
+	if (*start == ':') {
 		char *firstBang = strchr(start+1, '!');
 		char *firstSpace = strchr(start+1, ' ');
 
-		if (firstBang != NULL && firstSpace != NULL)
-		{
-			if (firstBang < firstSpace)
-			{
+		if (firstBang != NULL && firstSpace != NULL) {
+			if (firstBang < firstSpace) {
 				*firstBang = 0;
 				source = strdup(start+1);
 				*firstBang = '!';
@@ -115,8 +108,7 @@ char *parseSourceFromMessage(char *srvmessage, int *offset)
 }
 
 
-struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joinCallback, IRCChannelPartCallback partCallback, IRCChannelQuitCallback quitCallback, void *userdata)
-{
+struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joinCallback, IRCChannelPartCallback partCallback, IRCChannelQuitCallback quitCallback, IRCChannelTopicCallback topicCallback, void *userdata) {
 #if LOG_ALL
 	FILE *fp = fopen("logfile.txt", "wa");
 	fprintf(fp, "%s", srvmessage);
@@ -126,7 +118,9 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 	int offset = 0;
 	struct Message *message = NULL;
 
-	if (strlen(srvmessage) == 0) return NULL;
+	if (strlen(srvmessage) == 0) {
+		return NULL;
+	}
 
 	char *source = parseSourceFromMessage(srvmessage, &offset);	// needs to be freed
 
@@ -136,15 +130,13 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 
 	char *params = srvmessage+offset;
 
-	if (command == NULL || strlen(command) == 0)
-	{
+	if (command == NULL || strlen(command) == 0) {
 #if DEBUG
 		printf("Failed parsing server message: [%s]\n", srvmessage);
 #endif
 	}
 
-	if(!strcasecmp(command, "PING"))
-	{
+	if(!strcasecmp(command, "PING")) {
 		// Background processing, no need to generate a Message from this
 		send(activeSocket, "PONG ", 5, 0);
 		send(activeSocket, params, strlen(params), 0);
@@ -153,7 +145,9 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 		int paramOffset = 0;
 		char *target = parseFirstWord(params, &paramOffset);
 		char *messageBody = params+paramOffset;
-		if(*messageBody == ':') messageBody++;
+		if(*messageBody == ':') {
+			messageBody++;
+		}
 
 		message = MessageInit(source, target, messageBody);	
 		free(target);
@@ -167,16 +161,32 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 		int paramOffset = 0;
 		char *target = parseFirstWord(params, &paramOffset);
 		char *partMessage = params+paramOffset;
-		if (*partMessage == ':') partMessage++;
+		if (*partMessage == ':') {
+			partMessage++;
+		}
 	
 		partCallback(target, source, partMessage, userdata);
 		free(target);
 	} else if (!strcasecmp(command, "QUIT")) {
 		int paramOffset = 0;
 		char *partMessage = params+paramOffset;
-		if (*partMessage == ':') partMessage++;
+		if (*partMessage == ':') {
+			partMessage++;
+		}
 	
 		quitCallback(source, partMessage, userdata);
+	} else if (!strcasecmp(command, "332")) {
+		int paramOffset = 0;
+		char *forwho = parseFirstWord(params, &paramOffset);
+		char *target = parseFirstWord(params, &paramOffset);
+		char *topic = params+paramOffset;
+		if (*topic == ':') {
+			topic++;
+		}
+	
+		topicCallback(target, topic, userdata);
+		free(forwho);
+		free(target);
 	} else if(!strcmp(command, "353")) {
 		// NAMES reply, format is '<symbol> <target> :list of user names
 		int paramOffset = 0;
@@ -184,14 +194,14 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 		char * symbol = parseFirstWord(params, &paramOffset);
 		char * target = parseFirstWord(params, &paramOffset);
 		char * list = params+paramOffset;
-		if (*list == ':') list++;
+		if (*list == ':') {
+			list++;
+		}
 
 		//printf("Parsing [%s] into symbol [%s] channel [%s] names list: [%s]\n", params, symbol, target, list);
-		while(*list)
-		{
+		while(*list) {
 			char *nextName = strchr(list, ' ');
-			if (!nextName)
-			{
+			if (!nextName) {
 				joinCallback(target, list, userdata);
 				list += strlen(list);
 			} else {
@@ -218,23 +228,21 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 	return message;
 }
 
-void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCallback, IRCChannelPartCallback partCallback, IRCChannelQuitCallback quitCallback, void *userdata)
-{
-	if (!connected) return;
+void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCallback, IRCChannelPartCallback partCallback, IRCChannelQuitCallback quitCallback, IRCChannelTopicCallback topicCallback, void *userdata) {
+	if (!connected) {
+		return;
+	}
 
 	int n = recv(activeSocket, &readBuffer[readBufferAt], readBufferSize-readBufferAt, MSG_DONTWAIT);
-	if (n < 0)
-	{
-		if (errno != EAGAIN && errno != EWOULDBLOCK)
-		{
+	if (n < 0) {
+		if (errno != EAGAIN && errno != EWOULDBLOCK) {
 			//printf("Error reading from socket: %d!\n", errno);
 			printf("Connection has been closed.");
 			exit(1);
 		}
 	}
 
-	if (n > 0)
-	{
+	if (n > 0) {
 		readBufferAt += n;
 	}
 
@@ -242,14 +250,14 @@ void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCall
 	do {
 		int copied = 0;
 		commandFound = 0;
-		while (commandBufferAt < commandBufferSize && copied < readBufferAt)
-		{
+		while (commandBufferAt < commandBufferSize && copied < readBufferAt) {
 			commandBuffer[commandBufferAt] = readBuffer[copied++];
 
-			if (commandBuffer[commandBufferAt] == '\n')
-			{
+			if (commandBuffer[commandBufferAt] == '\n') {
 				commandBuffer[commandBufferAt] = 0;
-				if(commandBufferAt > 0 && commandBuffer[commandBufferAt-1] == '\r') commandBuffer[commandBufferAt-1] = 0;
+				if(commandBufferAt > 0 && commandBuffer[commandBufferAt-1] == '\r') {
+					commandBuffer[commandBufferAt-1] = 0;
+				}
 
 				commandFound = 1;
 				break;
@@ -258,12 +266,10 @@ void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCall
 			}
 		}
 
-		if (commandFound)
-		{
+		if (commandFound) {
 			//printf("commandBuffer: %s\n", commandBuffer);
-			struct Message *message = parseServerMessage(commandBuffer, joinCallback, partCallback, quitCallback, userdata);
-			if (message != NULL)
-			{
+			struct Message *message = parseServerMessage(commandBuffer, joinCallback, partCallback, quitCallback, topicCallback, userdata);
+			if (message != NULL) {
 				callback(message, userdata);
 			}
 			commandBufferAt = 0;
@@ -274,11 +280,8 @@ void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCall
 		}
 
 
-		if (copied > 0)
-		{
-		
-			for (int i = 0; i < readBufferAt-copied; i++)
-			{
+		if (copied > 0) {
+			for (int i = 0; i < readBufferAt-copied; i++) {
 				readBuffer[i] = readBuffer[i+copied];
 			}
 		
@@ -288,24 +291,25 @@ void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCall
 
 }
 
-int connectToServer(const char *server, int port)
-{
+int connectToServer(const char *server, int port) {
 	struct sockaddr_in serv_addr;
 	struct hostent *server_ent;
 
-	if (connected) connected = 0;
-	if (activeSocket >= 0) close(activeSocket);
+	if (connected) {
+		connected = 0;
+	}
+	if (activeSocket >= 0) {
+		close(activeSocket);
+	}
 
 	activeSocket = socket(AF_INET, SOCK_STREAM, 0);
-	if(activeSocket < 0)
-	{
+	if(activeSocket < 0) {
 		printf("Failed to create socket\n");
 		return 1;
 	}
 
 	server_ent = gethostbyname(server);
-	if (server_ent == NULL)
-	{
+	if (server_ent == NULL) {
 		printf("Failed to lookup server %s\n", server);
 		close(activeSocket);
 		activeSocket = -1;
@@ -318,8 +322,7 @@ int connectToServer(const char *server, int port)
 	memcpy((char *)&serv_addr.sin_addr.s_addr, (char *)server_ent->h_addr, server_ent->h_length);
 	serv_addr.sin_port = htons(port);
 
-	if (connect(activeSocket, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-	{
+	if (connect(activeSocket, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
 		printf("Failed to connect to %s:%d with error %d\n", server, port, errno);
 		close(activeSocket);
 		activeSocket = -1;
@@ -331,8 +334,7 @@ int connectToServer(const char *server, int port)
 	return 0;
 }
 
-int disconnectFromServer()
-{
+int disconnectFromServer() {
 	int wasConnected = connected;
 
 	if (connected) connected = 0;
@@ -340,4 +342,3 @@ int disconnectFromServer()
 
 	return wasConnected;
 }
-

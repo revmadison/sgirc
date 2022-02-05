@@ -12,6 +12,7 @@ struct Message;
 
 struct MessageTarget {
 	char * title;
+	char *topic;
 	struct Message * * messages;
 	int messageCapacity;
 	int messageAt;
@@ -29,6 +30,8 @@ int RemoveMessageTarget(struct MessageTarget *target);
 void RemoveAllMessageTargets();
 
 void AddMessageToTarget(struct MessageTarget *target, struct Message *message);
+
+void SetMessageTargetTopic(struct MessageTarget *target, char *topic);
 
 #endif
 

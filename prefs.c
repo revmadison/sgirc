@@ -6,11 +6,12 @@
 #include "prefs.h"
 #include "thirdparty/cJSON.h"
 
-int LoadPrefs(struct Prefs *prefs, char *prefsFile)
-{
+int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 	char *fileName;
 
-	if(!prefs) return PREFS_LOAD_FAILURE;
+	if(!prefs) {
+		return PREFS_LOAD_FAILURE;
+	}
 
 	// Setup default prefs first
 	prefs->showTimestamp = 1;
@@ -21,13 +22,11 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile)
 	prefs->discordBridgeName = NULL;
 	prefs->connectOnLaunch = 0;
 
-	if(prefsFile) 
-	{
+	if(prefsFile) {
 		fileName = strdup(prefsFile);
 	} else {
 		char *homeDir = getenv("HOME");
-		if(!homeDir)
-		{
+		if(!homeDir) {
 			return PREFS_LOAD_NOFILE;
 		}
 		fileName = (char *)malloc(strlen(homeDir)+14);
@@ -40,16 +39,14 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile)
 
 	int fileSize = 0;
 	char *fileBuffer;
-	if(!fp)
-	{
+	if(!fp) {
 		return PREFS_LOAD_NOFILE;
 	}
 	fseek(fp, 0, SEEK_END);
 	fileSize = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
 	fileBuffer = (char *)malloc(fileSize+1);
-	if(!fileBuffer)
-	{
+	if(!fileBuffer) {
 		fclose(fp);
 		return PREFS_LOAD_OOM;
 	}
@@ -60,44 +57,36 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile)
 	cJSON *prefsJSON = cJSON_Parse(fileBuffer);
 	free(fileBuffer);
 
-	if(!prefsJSON)
-	{
+	if(!prefsJSON) {
 		return PREFS_LOAD_BADFILE;
 	}
 
 	cJSON *showTimestamp = cJSON_GetObjectItem(prefsJSON, "showTimestamp");
-	if(showTimestamp && cJSON_IsBool(showTimestamp))
-	{
+	if(showTimestamp && cJSON_IsBool(showTimestamp)) {
 		prefs->showTimestamp = cJSON_IsTrue(showTimestamp) ? 1 : 0;
 	}
 	cJSON *defaultServer = cJSON_GetObjectItem(prefsJSON, "defaultServer");
-	if(defaultServer && !cJSON_IsNull(defaultServer))
-	{
+	if(defaultServer && !cJSON_IsNull(defaultServer)) {
 		prefs->defaultServer = strdup(cJSON_GetStringValue(defaultServer));
 	}
 	cJSON *defaultPort = cJSON_GetObjectItem(prefsJSON, "defaultPort");
-	if(defaultPort && cJSON_IsNumber(defaultPort))
-	{
+	if(defaultPort && cJSON_IsNumber(defaultPort)) {
 		prefs->defaultPort = (int)cJSON_GetNumberValue(defaultPort);
 	}
 	cJSON *defaultNick = cJSON_GetObjectItem(prefsJSON, "defaultNick");
-	if(defaultNick && !cJSON_IsNull(defaultNick))
-	{
+	if(defaultNick && !cJSON_IsNull(defaultNick)) {
 		prefs->defaultNick = strdup(cJSON_GetStringValue(defaultNick));
 	}
 	cJSON *saveLogs = cJSON_GetObjectItem(prefsJSON, "saveLogs");
-	if(saveLogs && cJSON_IsBool(saveLogs))
-	{
+	if(saveLogs && cJSON_IsBool(saveLogs)) {
 		prefs->saveLogs = cJSON_IsTrue(saveLogs) ? 1 : 0;
 	}
 	cJSON *discordBridgeName = cJSON_GetObjectItem(prefsJSON, "discordBridgeName");
-	if(discordBridgeName && !cJSON_IsNull(discordBridgeName))
-	{
+	if(discordBridgeName && !cJSON_IsNull(discordBridgeName)) {
 		prefs->discordBridgeName = strdup(cJSON_GetStringValue(discordBridgeName));
 	}
 	cJSON *connectOnLaunch = cJSON_GetObjectItem(prefsJSON, "connectOnLaunch");
-	if(connectOnLaunch && cJSON_IsBool(connectOnLaunch))
-	{
+	if(connectOnLaunch && cJSON_IsBool(connectOnLaunch)) {
 		prefs->connectOnLaunch = cJSON_IsTrue(connectOnLaunch) ? 1 : 0;
 	}
 
@@ -106,22 +95,21 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile)
 	return PREFS_SUCCESS;
 }
 
-int SavePrefs(struct Prefs *prefs, char *prefsFile)
-{
+int SavePrefs(struct Prefs *prefs, char *prefsFile) {
 	char *fileName;
 
-	if(!prefs) return PREFS_SAVE_FAILURE;
+	if(!prefs) {
+		return PREFS_SAVE_FAILURE;
+	}
 
-	if(prefsFile)
-	{
+	if(prefsFile) {
 		fileName = strdup(prefsFile);
 	} else {
 		char *homeDir = getenv("HOME");
-		if(!homeDir)
-		{
+		if(!homeDir) {
 			return PREFS_LOAD_NOFILE;
 		}
-		char *fileName = (char *)malloc(strlen(homeDir)+14);
+		fileName = (char *)malloc(strlen(homeDir)+14);
 		strcpy(fileName, homeDir);
 		strcat(fileName, "/.sgirc");
 
@@ -131,22 +119,19 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile)
 
 	cJSON *prefsJSON = cJSON_CreateObject();
 	cJSON_AddBoolToObject(prefsJSON, "showTimestamp", prefs->showTimestamp?1:0);
-	if(prefs->defaultServer)
-	{
+	if(prefs->defaultServer) {
 		cJSON_AddStringToObject(prefsJSON, "defaultServer", prefs->defaultServer);
 	} else {
 		cJSON_AddNullToObject(prefsJSON, "defaultServer");
 	}
 	cJSON_AddNumberToObject(prefsJSON, "defaultPort", prefs->defaultPort);
-	if(prefs->defaultNick)
-	{
+	if(prefs->defaultNick) {
 		cJSON_AddStringToObject(prefsJSON, "defaultNick", prefs->defaultNick);
 	} else {
 		cJSON_AddNullToObject(prefsJSON, "defaultNick");
 	}
 	cJSON_AddBoolToObject(prefsJSON, "saveLogs", prefs->saveLogs?1:0);
-	if(prefs->discordBridgeName)
-	{
+	if(prefs->discordBridgeName) {
 		cJSON_AddStringToObject(prefsJSON, "discordBridgeName", prefs->discordBridgeName);
 	} else {
 		cJSON_AddNullToObject(prefsJSON, "discordBridgeName");
@@ -156,15 +141,13 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile)
 	char *prefsString = cJSON_Print(prefsJSON);
 	cJSON_Delete(prefsJSON);
 
-	if(!prefsString)
-	{
+	if(!prefsString) {
 		return PREFS_SAVE_FAILURE;
 	}
 
 	FILE *fp = fopen(fileName, "w");
 	free(fileName);
-	if(!fp)
-	{
+	if(!fp) {
 		free(prefsString);
 		return PREFS_SAVE_CANTOPEN;
 	}

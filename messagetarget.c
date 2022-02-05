@@ -8,15 +8,15 @@ char *  MessageTargetNames[MAX_MESSAGE_TARGETS];
 struct MessageTarget MessageTargets[MAX_MESSAGE_TARGETS];
 int NumMessageTargets;
 
-int AddMessageTarget(char *targetName, char *title, int type)
-{
-	if (NumMessageTargets >= MAX_MESSAGE_TARGETS) return -1;
+int AddMessageTarget(char *targetName, char *title, int type) {
+	if (NumMessageTargets >= MAX_MESSAGE_TARGETS) {
+		return -1;
+	}
 
 	MessageTargetNames[NumMessageTargets] = strdup(targetName);
 	MessageTargets[NumMessageTargets].title = strdup(title);
 	MessageTargets[NumMessageTargets].messages = (struct Message **)malloc(MESSAGE_TARGET_CAPACITY * sizeof(struct Message *));
-	for (int i = 0; i < MESSAGE_TARGET_CAPACITY; i++)
-	{
+	for (int i = 0; i < MESSAGE_TARGET_CAPACITY; i++) {
 		MessageTargets[NumMessageTargets].messages[i] = NULL;
 	}
 
@@ -24,20 +24,18 @@ int AddMessageTarget(char *targetName, char *title, int type)
 	MessageTargets[NumMessageTargets].messageAt = 0;
 	MessageTargets[NumMessageTargets].type = type;
 	MessageTargets[NumMessageTargets].index = NumMessageTargets;
+	MessageTargets[NumMessageTargets].topic = NULL;
 
 	NumMessageTargets++;
 
 	return NumMessageTargets-1;
 }
 
-void AddMessageToTarget(struct MessageTarget *target, struct Message *message)
-{
+void AddMessageToTarget(struct MessageTarget *target, struct Message *message) {
 
-	if (target->messageAt >= target->messageCapacity)
-	{
+	if (target->messageAt >= target->messageCapacity) {
 		int halfcap = target->messageCapacity>>1;
-		for (int i = 0; i < halfcap; i++)
-		{
+		for (int i = 0; i < halfcap; i++) {
 			MessageFree(target->messages[i]);
 			target->messages[i] = target->messages[halfcap+i];
 		}
@@ -48,33 +46,30 @@ void AddMessageToTarget(struct MessageTarget *target, struct Message *message)
 	target->messageAt++;
 }
 
-struct MessageTarget * FindMessageTargetByName(char *name)
-{
-	for(int i = 0; i < NumMessageTargets; i++)
-	{
-		if(!strcasecmp(MessageTargetNames[i], name))
-		{
+struct MessageTarget * FindMessageTargetByName(char *name) {
+	for(int i = 0; i < NumMessageTargets; i++) {
+		if(!strcasecmp(MessageTargetNames[i], name)) {
 			return &MessageTargets[i];
 		}
 	}
 	return NULL;
 }
 
-int RemoveMessageTarget(struct MessageTarget *target)
-{
-	for(int i = 0; i < NumMessageTargets; i++)
-	{
-		if(target == &MessageTargets[i])
-		{
-			for(int m = 0; m < target->messageAt; m++)
-			{
+int RemoveMessageTarget(struct MessageTarget *target) {
+	for(int i = 0; i < NumMessageTargets; i++) {
+		if(target == &MessageTargets[i]) {
+			for(int m = 0; m < target->messageAt; m++) {
 				MessageFree(target->messages[m]);
 			}
 			free(target->messages);
 			free(target->title);
 
-			for(int l = i; l < NumMessageTargets-1; l++)
-			{
+			if(target->topic) {
+				free(target->topic);
+				target->topic = NULL;
+			}
+
+			for(int l = i; l < NumMessageTargets-1; l++) {
 				MessageTargets[l] = MessageTargets[l+1];
 				MessageTargets[l].index = l;
 			}
@@ -85,19 +80,31 @@ int RemoveMessageTarget(struct MessageTarget *target)
 	return -1;
 }
 
-void RemoveAllMessageTargets()
-{
-	for(int i = 0; i < NumMessageTargets; i++)
-	{
+void RemoveAllMessageTargets() {
+	for(int i = 0; i < NumMessageTargets; i++) {
 		struct MessageTarget *target = &MessageTargets[i];
-		for(int m = 0; m < target->messageAt; m++)
-		{
+		for(int m = 0; m < target->messageAt; m++) {
 			MessageFree(target->messages[m]);
 		}
 		free(target->messages);
 		free(target->title);
+		if(target->topic) {
+			free(target->topic);
+			target->topic = NULL;
+		}
 	}
 	NumMessageTargets = 0;
 }
 	
+void SetMessageTargetTopic(struct MessageTarget *target, char *topic) {
+	if(target->topic) {
+		free(target->topic);
+	}
+	if(topic) {
+		target->topic = strdup(topic);
+	} else {
+		target->topic = NULL;
+	}
+}
+
 
