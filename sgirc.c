@@ -9,6 +9,8 @@
 #include <Xm/Text.h>
 #include <Xm/TextF.h>
 
+#include <X11/Xresource.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
@@ -28,7 +30,7 @@ String fallbacks[] = {
 	"*sgiMode: true",
 	"*useSchemes: all",
 	"sgirc*XmList.fontList: -*-screen-medium-r-normal--12-*-*-*-*-*-*-*, -*-screen-bold-r-normal--12-*-*-*-*-*-*-*:UnreadChannel",
-	"sgirc*chatList.fontList: -*-screen-medium-r-normal--12-*-*-*-*-*-*-*",
+	"sgirc*chatFont: -*-screen-medium-r-normal--12-*-*-*-*-*-*-*",
 	NULL
 };
 
@@ -1320,7 +1322,24 @@ int main(int argc, char** argv)
 	XtAddCallback(textField, XmNactivateCallback, textInputCallback, chatList);
 	XtAddCallback(channelList, XmNbrowseSelectionCallback, channelSelectedCallback,  NULL);
 
-	chatFontStruct = XLoadQueryFont(XtDisplay(chatList), "-*-screen-medium-r-normal--12-*-*-*-*-*-*-*");
+
+	{
+		XrmInitialize();
+		XrmDatabase xrdb = XrmGetDatabase(XtDisplay(formLayout));
+		if(!xrdb)
+		{
+			printf("NULL xrdb\n");
+			return 0;
+		}
+		char *strtype = NULL;
+		XrmValue value;
+		if(XrmGetResource(xrdb, "sgirc.chatList.chatFont", "Sgirc.Chatlist.ChatFont", &strtype, &value))
+		{
+			chatFontStruct = XLoadQueryFont(XtDisplay(chatList), value.addr);
+		} else {
+			chatFontStruct = XLoadQueryFont(XtDisplay(chatList), "-*-screen-medium-r-normal--12-*-*-*-*-*-*-*");
+		}
+	}
 	gcv.foreground = BlackPixelOfScreen(XtScreen(chatList));
 	chatGC = XCreateGC(XtDisplay(chatList), RootWindowOfScreen(XtScreen(chatList)), GCForeground, &gcv);
 	XSetFont(XtDisplay(chatList), chatGC, chatFontStruct->fid);
