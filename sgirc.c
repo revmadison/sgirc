@@ -80,6 +80,8 @@ static unsigned long chatNickColor;
 static unsigned long chatBridgeColor;
 static unsigned long chatSelectionColor;
 
+struct IRCConnection irc;
+
 void SetupNamesList() {
 	XmListDeleteAllItems(namesList);
 
@@ -284,18 +286,18 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 	if(currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL && newtext[0] != '/') {
 		char fullmessage[4096];
 		snprintf(fullmessage, 4095, "PRIVMSG %s :%s", currentTarget->title, newtext);
-		sendIRCCommand(fullmessage);
+		sendIRCCommand(&irc, fullmessage);
 
-		struct Message *message = MessageInit(nick, currentTarget->title, newtext);
+		struct Message *message = MessageInit(&irc, nick, currentTarget->title, newtext);
 		AddMessageToTarget(currentTarget, message);
 
 		recalculateBreaksAndScrollBar();
 	} else if(currentTarget != NULL && currentTarget->type == MESSAGETARGET_WHISPER && newtext[0] != '/') {
 		char fullmessage[4096];
 		snprintf(fullmessage, 4095, "PRIVMSG %s :%s", currentTarget->title, newtext);
-		sendIRCCommand(fullmessage);
+		sendIRCCommand(&irc, fullmessage);
 
-		struct Message *message = MessageInit(nick, currentTarget->title, newtext);
+		struct Message *message = MessageInit(&irc, nick, currentTarget->title, newtext);
 		AddMessageToTarget(currentTarget, message);
 
 		recalculateBreaksAndScrollBar();
@@ -309,7 +311,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 			if (currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL) {
 				char buffer[1024];
 				snprintf(buffer, 1023, "PART %s", currentTarget->title);
-				sendIRCCommand(buffer);
+				sendIRCCommand(&irc, buffer);
 			}
 
 			int removingIndex = currentTarget->index;
@@ -341,7 +343,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 				} else {
 					snprintf(buffer, 1023, "PART %s", currentTarget->title);
 				}
-				sendIRCCommand(buffer);
+				sendIRCCommand(&irc, buffer);
 
 				int removingIndex = currentTarget->index;
 				int newCount = RemoveMessageTarget(currentTarget);
@@ -372,7 +374,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 				text = firstSpace + 1;
 
 				snprintf(fullmessage, 4095, "PRIVMSG %s :%s", target, text);
-				sendIRCCommand(fullmessage);
+				sendIRCCommand(&irc, fullmessage);
 				skipSendingCommand = 1;
 				
 				msgTarget = FindMessageTargetByName(target);
@@ -386,7 +388,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 				}
 				if(msgTarget) {
 
-					struct Message *message = MessageInit(nick, target, text);
+					struct Message *message = MessageInit(&irc, nick, target, text);
 					AddMessageToTarget(msgTarget, message);
 
 					if(msgTarget == currentTarget) {
@@ -399,7 +401,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		}
 
 		if(!skipSendingCommand) {
-			sendIRCCommand(start);
+			sendIRCCommand(&irc, start);
 		}
 	}
 	
@@ -428,7 +430,7 @@ void channelSelectedCallback(Widget chanList, XtPointer userData, XtPointer call
 
 
 // IRC Client Callbacks
-void ircClientUpdateCallback(struct Message *message, void *userdata) {
+void ircClientUpdateCallback(struct IRCConnection *c, struct Message *message, void *userdata) {
 	struct MessageTarget *target;
 	char *actualTarget = message->target;
 	if(!strcmp(actualTarget, nick)) {
@@ -461,7 +463,7 @@ void ircClientUpdateCallback(struct Message *message, void *userdata) {
 	}
 	
 }
-void ircClientChannelJoinCallback(char *channel, char *name, void *userdata) {
+void ircClientChannelJoinCallback(struct IRCConnection *c, char *channel, char *name, void *userdata) {
 	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
 	if (messageTarget) {
 		AddToMemberList(MessageTargetMembers[messageTarget->index], name);
@@ -470,12 +472,12 @@ void ircClientChannelJoinCallback(char *channel, char *name, void *userdata) {
 		}
 	}	
 }
-void ircClientChannelPartCallback(char *channel, char *name, char *partMessage, void *userdata) {
+void ircClientChannelPartCallback(struct IRCConnection *c, char *channel, char *name, char *partMessage, void *userdata) {
 	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
 	if (messageTarget) {
 		char buffer[1024];
 		snprintf(buffer, 1023, "** %s has left %s (%s)", name, channel, partMessage?partMessage:"no message");
-		struct Message *message = MessageInit(name, messageTarget->title, buffer);
+		struct Message *message = MessageInit(&irc, name, messageTarget->title, buffer);
 		message->type = MESSAGE_TYPE_SERVERMESSAGE;
 		AddMessageToTarget(messageTarget, message);
 
@@ -485,13 +487,13 @@ void ircClientChannelPartCallback(char *channel, char *name, char *partMessage, 
 		}
 	}	
 }
-void ircClientChannelQuitCallback(char *name, char *quitMessage, void *userdata) {
+void ircClientChannelQuitCallback(struct IRCConnection *c, char *name, char *quitMessage, void *userdata) {
 	for(int i = 0; i < NumMessageTargets; i++) {
 		if(RemoveFromMemberList(MessageTargetMembers[i], name)) {
 			struct MessageTarget *messageTarget = &MessageTargets[i];
 			char buffer[1024];
 			snprintf(buffer, 1023, "** %s has quit (%s)", name, quitMessage?quitMessage:"no message");
-			struct Message *message = MessageInit(name, messageTarget->title, buffer);
+			struct Message *message = MessageInit(&irc, name, messageTarget->title, buffer);
 			message->type = MESSAGE_TYPE_SERVERMESSAGE;
 			AddMessageToTarget(messageTarget, message);
 
@@ -501,7 +503,7 @@ void ircClientChannelQuitCallback(char *name, char *quitMessage, void *userdata)
 		}	
 	}
 }
-void ircClientChannelTopicCallback(char *channel, char *topic, void *userdata) {
+void ircClientChannelTopicCallback(struct IRCConnection *c, char *channel, char *topic, void *userdata) {
 	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
 	if (messageTarget) {
 
@@ -516,7 +518,7 @@ void ircClientChannelTopicCallback(char *channel, char *topic, void *userdata) {
 void updateTimerCallback(XtPointer clientData, XtIntervalId *timer) {
 	XtAppContext * app = (XtAppContext *)clientData;
 
-	updateIRCClient(ircClientUpdateCallback, ircClientChannelJoinCallback, ircClientChannelPartCallback, ircClientChannelQuitCallback, ircClientChannelTopicCallback, (void *)chatList);
+	updateIRCClient(&irc, (void *)chatList);
 
 	XtAppAddTimeOut(*app, 50, updateTimerCallback, app);
 }
@@ -941,7 +943,7 @@ char *stringFromXmString(XmString xmString) {
 }
 
 void connectAndSetNick(char *server, int port, char *nick) {
-	disconnectFromServer();
+	disconnectFromServer(&irc);
 	RemoveAllMessageTargets();
 	AddMessageTarget(SERVER_TARGET, server, MESSAGETARGET_SERVER);
 	MessageTargetMembers[0] = MemberListInit();
@@ -949,13 +951,13 @@ void connectAndSetNick(char *server, int port, char *nick) {
 	SetupChannelList();
 
 	printf("Attempting to connect to %s:%d\n", server, port);
-	connectToServer(server, port);
+	connectToServer(&irc, server, port);
 
 	char connbuffer[1024];
 	snprintf(connbuffer, 1023, "NICK %s", nick);
-	sendIRCCommand(connbuffer);
+	sendIRCCommand(&irc, connbuffer);
 	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
-	sendIRCCommand(connbuffer);
+	sendIRCCommand(&irc, connbuffer);
 }
 
 void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
@@ -997,7 +999,7 @@ void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
 
 	char connbuffer[1024];
 	snprintf(connbuffer, 1023, "NICK %s", nick);
-	sendIRCCommand(connbuffer);
+	sendIRCCommand(&irc, connbuffer);
 
 }
 
@@ -1133,7 +1135,12 @@ int main(int argc, char** argv) {
 	}
 	printf("Default nick: %s\n", nick);
 
-	initIRCClient();
+	initIRCConnection(&irc);
+	irc.messageCallback = ircClientUpdateCallback;
+	irc.joinCallback = ircClientChannelJoinCallback;
+	irc.partCallback = ircClientChannelPartCallback;
+	irc.quitCallback = ircClientChannelQuitCallback;
+	irc.topicCallback = ircClientChannelTopicCallback;
 
 	XtSetLanguageProc(NULL, NULL, NULL);
 

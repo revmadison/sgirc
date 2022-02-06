@@ -16,39 +16,28 @@
 
 //#define LOG_ALL 1
 
-int activeSocket;
-int connected;
+void initIRCConnection(struct IRCConnection *c) {
+	c->activeSocket = -1;
+	c->connected = 0;
 
-char * readBuffer;
-int readBufferSize;
-int readBufferAt;
+	c->readBuffer = (char *)malloc(4096);
+	c->readBufferSize = 4096;
+	c->readBufferAt = 0;
 
-char * commandBuffer;
-int commandBufferSize;
-int commandBufferAt;
-
-void initIRCClient() {
-	activeSocket = -1;
-	connected = 0;
-
-	readBuffer = (char *)malloc(4096);
-	readBufferSize = 4096;
-	readBufferAt = 0;
-
-	commandBuffer = (char *)malloc(4096);
-	commandBufferSize = 4096;
-	commandBufferAt = 0;
+	c->commandBuffer = (char *)malloc(4096);
+	c->commandBufferSize = 4096;
+	c->commandBufferAt = 0;
 }
 
-void sendIRCCommand(const char *command) {
-	if (!connected) {
+void sendIRCCommand(struct IRCConnection *c, const char *command) {
+	if (!c->connected) {
 		return;
 	}
 #if DEBUG
 	printf("Sending: %s\n", command);
 #endif
-	send(activeSocket, command, strlen(command), 0);
-	send(activeSocket, "\r\n", 2, 0);
+	send(c->activeSocket, command, strlen(command), 0);
+	send(c->activeSocket, "\r\n", 2, 0);
 }
 
 char *parseFirstWord(char *str, int *offset) {
@@ -108,7 +97,7 @@ char *parseSourceFromMessage(char *srvmessage, int *offset) {
 }
 
 
-struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joinCallback, IRCChannelPartCallback partCallback, IRCChannelQuitCallback quitCallback, IRCChannelTopicCallback topicCallback, void *userdata) {
+struct Message *parseServerMessage(struct IRCConnection *c, char *srvmessage, void *userdata) {
 #if LOG_ALL
 	FILE *fp = fopen("logfile.txt", "wa");
 	fprintf(fp, "%s", srvmessage);
@@ -138,9 +127,9 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 
 	if(!strcasecmp(command, "PING")) {
 		// Background processing, no need to generate a Message from this
-		send(activeSocket, "PONG ", 5, 0);
-		send(activeSocket, params, strlen(params), 0);
-		send(activeSocket, "\r\n", 2, 0);
+		send(c->activeSocket, "PONG ", 5, 0);
+		send(c->activeSocket, params, strlen(params), 0);
+		send(c->activeSocket, "\r\n", 2, 0);
 	} else if(!strcasecmp(command, "PRIVMSG")) {
 		int paramOffset = 0;
 		char *target = parseFirstWord(params, &paramOffset);
@@ -149,13 +138,13 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 			messageBody++;
 		}
 
-		message = MessageInit(source, target, messageBody);	
+		message = MessageInit(c, source, target, messageBody);	
 		free(target);
 	} else if(!strcasecmp(command, "JOIN")) {
 		int paramOffset = 0;
 		char *target = parseFirstWord(params, &paramOffset);
 	
-		joinCallback(target, source, userdata);
+		c->joinCallback(c, target, source, userdata);
 		free(target);
 	} else if (!strcasecmp(command, "PART")) {
 		int paramOffset = 0;
@@ -165,7 +154,7 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 			partMessage++;
 		}
 	
-		partCallback(target, source, partMessage, userdata);
+		c->partCallback(c, target, source, partMessage, userdata);
 		free(target);
 	} else if (!strcasecmp(command, "QUIT")) {
 		int paramOffset = 0;
@@ -174,7 +163,7 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 			partMessage++;
 		}
 	
-		quitCallback(source, partMessage, userdata);
+		c->quitCallback(c, source, partMessage, userdata);
 	} else if (!strcasecmp(command, "332")) {
 		int paramOffset = 0;
 		char *forwho = parseFirstWord(params, &paramOffset);
@@ -184,7 +173,7 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 			topic++;
 		}
 	
-		topicCallback(target, topic, userdata);
+		c->topicCallback(c, target, topic, userdata);
 		free(forwho);
 		free(target);
 	} else if(!strcmp(command, "353")) {
@@ -202,11 +191,11 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 		while(*list) {
 			char *nextName = strchr(list, ' ');
 			if (!nextName) {
-				joinCallback(target, list, userdata);
+				c->joinCallback(c, target, list, userdata);
 				list += strlen(list);
 			} else {
 				*nextName = 0;
-				joinCallback(target, list, userdata);
+				c->joinCallback(c, target, list, userdata);
 				*nextName = ' ';
 				list = nextName+1;
 			}
@@ -219,7 +208,7 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 #if DEBUG
 		printf("Unknown command [%s] from source [%s] in [%s]\n", command, source?source:"NULL", srvmessage);
 #endif
-		message = MessageInit(source, SERVER_TARGET, fullCommandAndParams);
+		message = MessageInit(c, source, SERVER_TARGET, fullCommandAndParams);
 	}
 
 	if (source) free(source);
@@ -228,12 +217,12 @@ struct Message *parseServerMessage(char * srvmessage, IRCChannelJoinCallback joi
 	return message;
 }
 
-void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCallback, IRCChannelPartCallback partCallback, IRCChannelQuitCallback quitCallback, IRCChannelTopicCallback topicCallback, void *userdata) {
-	if (!connected) {
+void updateIRCClient(struct IRCConnection *c, void *userdata) {
+	if (!c->connected) {
 		return;
 	}
 
-	int n = recv(activeSocket, &readBuffer[readBufferAt], readBufferSize-readBufferAt, MSG_DONTWAIT);
+	int n = recv(c->activeSocket, &c->readBuffer[c->readBufferAt], c->readBufferSize-c->readBufferAt, MSG_DONTWAIT);
 	if (n < 0) {
 		if (errno != EAGAIN && errno != EWOULDBLOCK) {
 			//printf("Error reading from socket: %d!\n", errno);
@@ -243,37 +232,37 @@ void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCall
 	}
 
 	if (n > 0) {
-		readBufferAt += n;
+		c->readBufferAt += n;
 	}
 
 	int commandFound;
 	do {
 		int copied = 0;
 		commandFound = 0;
-		while (commandBufferAt < commandBufferSize && copied < readBufferAt) {
-			commandBuffer[commandBufferAt] = readBuffer[copied++];
+		while (c->commandBufferAt < c->commandBufferSize && copied < c->readBufferAt) {
+			c->commandBuffer[c->commandBufferAt] = c->readBuffer[copied++];
 
-			if (commandBuffer[commandBufferAt] == '\n') {
-				commandBuffer[commandBufferAt] = 0;
-				if(commandBufferAt > 0 && commandBuffer[commandBufferAt-1] == '\r') {
-					commandBuffer[commandBufferAt-1] = 0;
+			if (c->commandBuffer[c->commandBufferAt] == '\n') {
+				c->commandBuffer[c->commandBufferAt] = 0;
+				if(c->commandBufferAt > 0 && c->commandBuffer[c->commandBufferAt-1] == '\r') {
+					c->commandBuffer[c->commandBufferAt-1] = 0;
 				}
 
 				commandFound = 1;
 				break;
 			} else {
-				commandBufferAt++;
+				c->commandBufferAt++;
 			}
 		}
 
 		if (commandFound) {
 			//printf("commandBuffer: %s\n", commandBuffer);
-			struct Message *message = parseServerMessage(commandBuffer, joinCallback, partCallback, quitCallback, topicCallback, userdata);
+			struct Message *message = parseServerMessage(c, c->commandBuffer, userdata);
 			if (message != NULL) {
-				callback(message, userdata);
+				c->messageCallback(c, message, userdata);
 			}
-			commandBufferAt = 0;
-		} else if(commandBufferAt >= commandBufferSize) {
+			c->commandBufferAt = 0;
+		} else if(c->commandBufferAt >= c->commandBufferSize) {
 #if DEBUG
 			printf("Command buffer overflowing?!?\n");
 #endif
@@ -281,29 +270,29 @@ void updateIRCClient(IRCUpdateCallback callback, IRCChannelJoinCallback joinCall
 
 
 		if (copied > 0) {
-			for (int i = 0; i < readBufferAt-copied; i++) {
-				readBuffer[i] = readBuffer[i+copied];
+			for (int i = 0; i < c->readBufferAt-copied; i++) {
+				c->readBuffer[i] = c->readBuffer[i+copied];
 			}
 		
-			readBufferAt -= copied;	
+			c->readBufferAt -= copied;	
 		}
 	} while(commandFound);
 
 }
 
-int connectToServer(const char *server, int port) {
+int connectToServer(struct IRCConnection *c, const char *server, int port) {
 	struct sockaddr_in serv_addr;
 	struct hostent *server_ent;
 
-	if (connected) {
-		connected = 0;
+	if (c->connected) {
+		c->connected = 0;
 	}
-	if (activeSocket >= 0) {
-		close(activeSocket);
+	if (c->activeSocket >= 0) {
+		close(c->activeSocket);
 	}
 
-	activeSocket = socket(AF_INET, SOCK_STREAM, 0);
-	if(activeSocket < 0) {
+	c->activeSocket = socket(AF_INET, SOCK_STREAM, 0);
+	if(c->activeSocket < 0) {
 		printf("Failed to create socket\n");
 		return 1;
 	}
@@ -311,8 +300,8 @@ int connectToServer(const char *server, int port) {
 	server_ent = gethostbyname(server);
 	if (server_ent == NULL) {
 		printf("Failed to lookup server %s\n", server);
-		close(activeSocket);
-		activeSocket = -1;
+		close(c->activeSocket);
+		c->activeSocket = -1;
 		return 1;
 	}
 
@@ -322,23 +311,23 @@ int connectToServer(const char *server, int port) {
 	memcpy((char *)&serv_addr.sin_addr.s_addr, (char *)server_ent->h_addr, server_ent->h_length);
 	serv_addr.sin_port = htons(port);
 
-	if (connect(activeSocket, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+	if (connect(c->activeSocket, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
 		printf("Failed to connect to %s:%d with error %d\n", server, port, errno);
-		close(activeSocket);
-		activeSocket = -1;
+		close(c->activeSocket);
+		c->activeSocket = -1;
 		return 1;
 	}
 
-	connected = 1;
+	c->connected = 1;
 
 	return 0;
 }
 
-int disconnectFromServer() {
-	int wasConnected = connected;
+int disconnectFromServer(struct IRCConnection *c) {
+	int wasConnected = c->connected;
 
-	if (connected) connected = 0;
-	if (activeSocket >= 0) close(activeSocket);
+	if (c->connected) c->connected = 0;
+	if (c->activeSocket >= 0) close(c->activeSocket);
 
 	return wasConnected;
 }

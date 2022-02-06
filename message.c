@@ -3,8 +3,12 @@
 
 #include "message.h"
 
-struct Message *MessageInit(char *source, char *target, char *messageBody) {
+struct IRCConnection;
+
+struct Message *MessageInit(struct IRCConnection *connection, char *source, char *target, char *messageBody) {
 	struct Message *message = (struct Message *)malloc(sizeof(struct Message));
+
+	message->connection = connection;
 
 	if (source) {
 		message->source = strdup(source);
