@@ -225,7 +225,7 @@ int calcMessageBreaks(char *line, int usableWidth, int index) {
 int recalculateMessageBreaks() {
 	Dimension chatWidth;
 	int i;
-	int totalLines;
+	int totalLines = 0;
 	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
 	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
@@ -265,6 +265,8 @@ void recalculateBreaksAndScrollBar() {
 	windowHeight = curHeight;
 	totalLines = recalculateMessageBreaks();
 	chatHeight = MAX(windowHeight, (totalLines+1)*chatFontHeight);
+
+	//printf("totalLines=%d\tfontHeight=%d\twinH=%d\tchatH=%d\n", totalLines,chatFontHeight,windowHeight,chatHeight);
 
 	XtVaSetValues(scrollbar, XmNmaximum, chatHeight, XmNsliderSize, windowHeight, XmNvalue, chatHeight-windowHeight, XmNpageIncrement, windowHeight>>1, NULL);
 
@@ -1135,7 +1137,7 @@ int main(int argc, char** argv) {
 
 	XtSetLanguageProc(NULL, NULL, NULL);
 
-	window = XtVaAppInitialize(&app, "SgIRC", NULL, 0, &argc, argv, fallbacks, NULL);
+	window = XtVaAppInitialize(&app, "Sgirc", NULL, 0, &argc, argv, fallbacks, NULL);
 
 	XtAppAddTimeOut(app, 100, updateTimerCallback, &app);
 
