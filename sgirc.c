@@ -54,6 +54,9 @@ static XFontStruct *chatFontStruct;
 static GC chatGC;
 static GC selectedGC;
 static char *nick;
+static int chatFontHeight = 12;
+static int chatTimestampOffset = 60;
+static int chatTextOffset = 116;
 
 static char *altPrefsFile = NULL;
 
@@ -223,8 +226,8 @@ int recalculateMessageBreaks() {
 	Dimension chatWidth;
 	int i;
 	int totalLines;
-	int nameOffset = prefs.showTimestamp ? 64 : 4;
-	int textOffset = prefs.showTimestamp ? 180 : 120;
+	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
+	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
 	XtVaGetValues(chatList, XmNwidth, &chatWidth, NULL);
 
@@ -261,7 +264,7 @@ void recalculateBreaksAndScrollBar() {
 	XtVaGetValues(chatList, XmNheight, &curHeight, NULL);
 	windowHeight = curHeight;
 	totalLines = recalculateMessageBreaks();
-	chatHeight = MAX(windowHeight, (totalLines+1)*12);
+	chatHeight = MAX(windowHeight, (totalLines+1)*chatFontHeight);
 
 	XtVaSetValues(scrollbar, XmNmaximum, chatHeight, XmNsliderSize, windowHeight, XmNvalue, chatHeight-windowHeight, XmNpageIncrement, windowHeight>>1, NULL);
 
@@ -580,15 +583,15 @@ void updateSelectionIndices() {
 	Display *display = XtDisplay(chatList);
 	Drawable window = XtWindow(chatList);
 	Dimension curWidth = 0, curHeight = 0;
-	Position y = 12;
+	Position y = chatFontHeight;
 	int scrollValue;
 	int i;
 
-	selectStartLine = selectStartY / 12;	// This is due to us using a set font that's 12 pixels high...
-	selectEndLine = selectEndY / 12;
+	selectStartLine = selectStartY / chatFontHeight;
+	selectEndLine = selectEndY / chatFontHeight;
 
-	int nameOffset = prefs.showTimestamp ? 64 : 4;
-	int textOffset = prefs.showTimestamp ? 180 : 120;
+	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
+	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
 	if(currentTarget == NULL) {
 		return;
@@ -615,7 +618,7 @@ void updateSelectionIndices() {
 
 		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
 			int offset = (currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
-			int yline = (y+scrollValue-12)/12;
+			int yline = (y+scrollValue-chatFontHeight)/chatFontHeight;
 
 			if(yline > selectEndLine) {
 				break;
@@ -665,7 +668,7 @@ void updateSelectionIndices() {
 				}
 			}
 			linestart += linewidth;
-			y += 12;
+			y += chatFontHeight;
 				
 		}
 		free(line);
@@ -673,7 +676,7 @@ void updateSelectionIndices() {
 }
 
 void captureSelection() {
-	Position y = 12;
+	Position y = chatFontHeight;
 	int scrollValue;
 	int i;
 	int curLen = 0;
@@ -700,7 +703,7 @@ void captureSelection() {
 		}
 
 		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
-			int yline = (y+scrollValue-12)/12;
+			int yline = (y+scrollValue-chatFontHeight)/chatFontHeight;
 
 			if(yline > selectEndLine) {
 				break;
@@ -740,7 +743,7 @@ void captureSelection() {
 				}
 			}
 			linestart += linewidth;
-			y += 12;
+			y += chatFontHeight;
 				
 		}
 		free(line);
@@ -758,17 +761,17 @@ void drawChatList() {
 	Display *display = XtDisplay(chatList);
 	Drawable window = XtWindow(chatList);
 	Dimension curWidth = 0, curHeight = 0;
-	Position y = 12;
+	Position y = chatFontHeight;
 	int scrollValue;
 	int i;
 	GC gc = chatGC;
 	char buffer[1024];
 
-	int selectStartLine = selectStartY / 12;	// This is due to us using a set font
-	int selectEndLine = selectEndY / 12;
+	int selectStartLine = selectStartY / chatFontHeight;	// This is due to us using a set font
+	int selectEndLine = selectEndY / chatFontHeight;
 
-	int nameOffset = prefs.showTimestamp ? 64 : 4;
-	int textOffset = prefs.showTimestamp ? 180 : 120;
+	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
+	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
 	if(currentTarget == NULL) {
 		return;
@@ -790,7 +793,7 @@ void drawChatList() {
 		int linelen = strlen(line);
 		int isBridge = 0;
 
-		if(y > -12) {
+		if(y > -chatFontHeight) {
 			if(prefs.showTimestamp) {
 				XSetForeground(display, gc, chatTimeColor);
 
@@ -807,9 +810,6 @@ void drawChatList() {
 				}
 
 				if(strlen(buffer) > 16) {
-					if(isBridge) {
-						buffer[14] = '>';
-					}
 					buffer[15] = '>';
 					buffer[16] = 0;
 				}
@@ -826,11 +826,11 @@ void drawChatList() {
 
 		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
 			int offset = (currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
-			int yline = (y+scrollValue-12)/12;
+			int yline = (y+scrollValue-chatFontHeight)/chatFontHeight;
 			int drewLine = 0;
 			linewidth = LineBreaksPerMessage[i][lineOfMessage];
 
-			if(y > -12) {
+			if(y > -chatFontHeight) {
 				if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX)) {
 					int preSel = selectStartIndex;
 					int preSelW = selectStartOffset;
@@ -861,7 +861,7 @@ void drawChatList() {
 				}
 			}
 			linestart += linewidth;
-			y += 12;
+			y += chatFontHeight;
 
 			if(y > curHeight+20) {
 				break;
@@ -1225,6 +1225,11 @@ int main(int argc, char** argv) {
 			chatFontStruct = XLoadQueryFont(display, "-*-screen-medium-r-normal--12-*-*-*-*-*-*-*");
 		}
 
+		chatFontHeight = chatFontStruct->ascent+chatFontStruct->descent;
+		chatTimestampOffset = XTextWidth(chatFontStruct, "88:88:88", 8);
+		chatTextOffset = XTextWidth(chatFontStruct, "<WWWWabcdefighi>", 16);
+		//printf("Font:\n\tasc: %d\n\tdes: %d", chatFontStruct->ascent, chatFontStruct->descent);
+		//printf("\n\tTso: %d\n\tTxt: %d\n", chatTimestampOffset, chatTextOffset);
 		chatBGColor = BlackPixelOfScreen(screen);
 		chatTextColor = WhitePixelOfScreen(screen);
 		chatTimeColor = WhitePixelOfScreen(screen);
