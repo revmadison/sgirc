@@ -4,6 +4,7 @@
 #include <Xm/Label.h>
 #include <Xm/List.h>
 #include <Xm/MainW.h>
+#include <Xm/PanedW.h>
 #include <Xm/ScrollBar.h>
 #include <Xm/SelectioB.h>
 #include <Xm/Text.h>
@@ -1080,7 +1081,7 @@ void addServerConnection(char *server, int port, char *nick) {
 
 
 int main(int argc, char** argv) {
-	Widget      	textField, formLayout, mainWindow, menubar;
+	Widget      	textField, formLayout, mainWindow, menubar, panes;
 	Arg         	args[32];
 	int         	n = 0;
 	XGCValues		gcv;
@@ -1151,7 +1152,20 @@ int main(int argc, char** argv) {
 	mainWindow = (Widget)XmCreateMainWindow(window, "main_window", NULL, 0);
 	XtManageChild(mainWindow);
 
-	formLayout = XtVaCreateWidget("formLayout", xmFormWidgetClass, mainWindow, NULL);
+	n = 0;
+	XtSetArg(args[n], XmNorientation, XmHORIZONTAL); n++;
+	panes = XmCreatePanedWindow(mainWindow, "panes", args, n);
+	XtManageChild(panes);
+
+	n = 0;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNwidth, 150); n++;
+	XtSetArg(args[n], XmNpaneMinimum, 100); n++;
+	XtSetArg(args[n], XmNskipAdjust, 1); n++;
+	channelList = XmCreateScrolledList(panes, "channelList", args, n);
+	XtManageChild(channelList);
+
+	formLayout = XtVaCreateWidget("formLayout", xmFormWidgetClass, panes, XmNpaneMinimum, 250, NULL);
 
 	XmString file = XmStringCreateLocalized("File");
 	menubar = XmVaCreateSimpleMenuBar(mainWindow, "menubar", 
@@ -1173,41 +1187,31 @@ int main(int argc, char** argv) {
 	XmStringFree(setNick);
 	XmStringFree(exit);
 
-	XtVaSetValues(mainWindow, XmNmenuBar, menubar, XmNworkWindow, formLayout, NULL);
+	XtVaSetValues(mainWindow, XmNmenuBar, menubar, XmNworkWindow, panes, NULL);
 
 	actions.string = "selection";
 	actions.proc = selection;
 	XtAppAddActions(app, &actions, 1);
 
-	n = 0;
-	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_FORM); n++;
-	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
-	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
-	XtSetArg(args[n], XmNresizable, 0); n++;
-	XtSetArg(args[n], XmNwidth, 150); n++;
-	channelList = XmCreateScrolledList(formLayout, "channelList", args, n);
-	XtManageChild(channelList);
 
 	n = 0;
-	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_FORM); n++;
-	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
-	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
 	XtSetArg(args[n], XmNresizable, 0); n++;
 	XtSetArg(args[n], XmNwidth, 150); n++;
-	namesList = XmCreateScrolledList(formLayout, "namesList", args, n);
+	XtSetArg(args[n], XmNpaneMinimum, 100); n++;
+	XtSetArg(args[n], XmNskipAdjust, 1); n++;
+	namesList = XmCreateScrolledList(panes, "namesList", args, n);
 	XtManageChild(namesList);
 
-	titleField = XtVaCreateManagedWidget("titleField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_WIDGET, XmNleftWidget, channelList, XmNrightAttachment, XmATTACH_WIDGET, XmNrightWidget, namesList, XmNtopAttachment, XmATTACH_FORM, XmNeditable, 0, NULL);
+	titleField = XtVaCreateManagedWidget("titleField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_FORM, XmNeditable, 0, NULL);
 
-	textField = XtVaCreateManagedWidget("textField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_WIDGET, XmNleftWidget, channelList, XmNrightAttachment, XmATTACH_WIDGET, XmNrightWidget, namesList, XmNbottomAttachment, XmATTACH_FORM, NULL);
+	textField = XtVaCreateManagedWidget("textField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNbottomAttachment, XmATTACH_FORM, NULL);
 
 	n = 0;
 	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNbottomWidget, textField); n++;
 	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNtopWidget, titleField); n++;
-	XtSetArg(args[n], XmNrightAttachment, XmATTACH_WIDGET); n++;
-	XtSetArg(args[n], XmNrightWidget, namesList); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
 	XtSetArg(args[n], XmNresizable, 0); n++;
 	XtSetArg(args[n], XmNincrement, 6); n++;
 	scrollbar = XmCreateScrollBar(formLayout, "scrollbar", args, n);
@@ -1285,10 +1289,8 @@ int main(int argc, char** argv) {
 	XtSetArg(args[n], XmNbottomWidget, textField); n++;
 	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNtopWidget, titleField); n++;
-	XtSetArg(args[n], XmNleftAttachment, XmATTACH_WIDGET); n++;
-	XtSetArg(args[n], XmNleftWidget, channelList); n++;
-	XtSetArg(args[n], XmNrightAttachment, XmATTACH_WIDGET); n++;
-	XtSetArg(args[n], XmNrightWidget, scrollbar); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
 	XtSetArg(args[n], XmNresizable, 1); n++;
 	XtSetArg(args[n], XmNresizePolicy, XmRESIZE_ANY); n++;
 	XtSetArg(args[n], XmNtranslations, XtParseTranslationTable(translations)); n++;

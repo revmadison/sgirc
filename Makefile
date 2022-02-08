@@ -1,9 +1,9 @@
 #MOTIFLIBS = -lSgm -lXm -lXt -lXpm -lX11 -lPW
-MOTIFLIBS = -lXm -lXt -lX11 -lPW
+MOTIFLIBS = -L/usr/Motif-2.1/lib32 -lXm -lXt -lX11 -lPW
 LLDLIBS=  $(MOTIFLIBS) 
 
 CC=c99
-CFLAGS=-mips3 -n32 -g 
+CFLAGS=-mips3 -n32 -g -I/usr/Motif-2.1/include
 
 COBJECTS=\
 	sgirc.o \
