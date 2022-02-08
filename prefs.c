@@ -17,6 +17,7 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 	prefs->showTimestamp = 1;
 	prefs->defaultServer = NULL;
 	prefs->defaultPort = -1;
+	prefs->defaultPass = NULL;
 	prefs->defaultNick = NULL;
 	prefs->saveLogs = 1;
 	prefs->discordBridgeName = NULL;
@@ -73,6 +74,10 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 	if(defaultPort && cJSON_IsNumber(defaultPort)) {
 		prefs->defaultPort = (int)cJSON_GetNumberValue(defaultPort);
 	}
+	cJSON *defaultPass = cJSON_GetObjectItem(prefsJSON, "defaultPass");
+	if(defaultPass && !cJSON_IsNull(defaultPass)) {
+		prefs->defaultPass = strdup(cJSON_GetStringValue(defaultPass));
+	}
 	cJSON *defaultNick = cJSON_GetObjectItem(prefsJSON, "defaultNick");
 	if(defaultNick && !cJSON_IsNull(defaultNick)) {
 		prefs->defaultNick = strdup(cJSON_GetStringValue(defaultNick));
@@ -125,6 +130,11 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile) {
 		cJSON_AddNullToObject(prefsJSON, "defaultServer");
 	}
 	cJSON_AddNumberToObject(prefsJSON, "defaultPort", prefs->defaultPort);
+	if(prefs->defaultPass) {
+		cJSON_AddStringToObject(prefsJSON, "defaultPass", prefs->defaultPass);
+	} else {
+		cJSON_AddNullToObject(prefsJSON, "defaultPass");
+	}
 	if(prefs->defaultNick) {
 		cJSON_AddStringToObject(prefsJSON, "defaultNick", prefs->defaultNick);
 	} else {

@@ -15,6 +15,7 @@ struct Prefs {
 	int showTimestamp;
 	char *defaultServer;
 	int defaultPort;
+	char *defaultPass;
 	char *defaultNick;
 	int saveLogs;
 	char *discordBridgeName;

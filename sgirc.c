@@ -1,14 +1,17 @@
 #include <Xm/CutPaste.h>
+#include <Xm/DialogS.h>
 #include <Xm/DrawingA.h>
 #include <Xm/Form.h>
 #include <Xm/Label.h>
 #include <Xm/List.h>
 #include <Xm/MainW.h>
 #include <Xm/PanedW.h>
+#include <Xm/PushB.h>
 #include <Xm/ScrollBar.h>
 #include <Xm/SelectioB.h>
 #include <Xm/Text.h>
 #include <Xm/TextF.h>
+#include <Xm/ToggleB.h>
 
 #include <X11/Xresource.h>
 
@@ -943,7 +946,7 @@ char *stringFromXmString(XmString xmString) {
 	return strdup(buffer);
 }
 
-void connectAndSetNick(char *server, int port, char *nick) {
+void connectAndSetNick(char *server, int port, char *nick, char *pass) {
 	disconnectFromServer(&irc);
 	RemoveAllMessageTargets();
 	AddMessageTarget(SERVER_TARGET, server, MESSAGETARGET_SERVER);
@@ -955,32 +958,14 @@ void connectAndSetNick(char *server, int port, char *nick) {
 	connectToServer(&irc, server, port);
 
 	char connbuffer[1024];
+	if(pass && strlen(pass) > 0) {
+		snprintf(connbuffer, 1023, "PASS %s", pass);
+		sendIRCCommand(&irc, connbuffer);
+	}
 	snprintf(connbuffer, 1023, "NICK %s", nick);
 	sendIRCCommand(&irc, connbuffer);
 	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
 	sendIRCCommand(&irc, connbuffer);
-}
-
-void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
-	XmSelectionBoxCallbackStruct *cbs;
-	cbs = (XmSelectionBoxCallbackStruct *)call_data;
-	char *server = stringFromXmString(cbs->value);
-	char *portstr = strchr(server, ':');
-	int port = 6667;
-	if(portstr) {
-		*portstr = 0;
-		portstr++;
-		port = atoi(portstr);
-	}
-	if(prefs.defaultServer) {
-		free(prefs.defaultServer);
-	}
-	prefs.defaultServer = strdup(server);
-	prefs.defaultPort = port;
-	SavePrefs(&prefs, altPrefsFile);
-
-	connectAndSetNick(server, port, nick);
-	free(server);
 }
 
 void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
@@ -1004,8 +989,228 @@ void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
 
 }
 
-void closeDialogCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
-	XtDestroyWidget(XtParent(widget));
+void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
+	Widget dialog = (Widget)client_data;
+	Widget form = XtNameToWidget(dialog, "dialogForm");
+	Widget serverField = XtNameToWidget(form, "server");
+	Widget passField = XtNameToWidget(form, "pass");
+	Widget nickField = XtNameToWidget(form, "nick");
+	Widget save = XtNameToWidget(form, "saveConn");
+
+	char *t = XmTextFieldGetString(serverField);
+	char *server = strdup(t);
+	char *portstr = strchr(server, ':');
+	char *nick = XmTextFieldGetString(nickField);
+	char *pass = XmTextFieldGetString(passField);
+	int port = 6667;
+	if(portstr) {
+		*portstr = 0;
+		portstr++;
+		port = atoi(portstr);
+	}
+
+	if(save && XmToggleButtonGetState(save)) {
+		if(prefs.defaultServer) {
+			free(prefs.defaultServer);
+		}
+		prefs.defaultServer = strdup(server);
+		prefs.defaultPort = port;
+
+		if(prefs.defaultPass) {
+			free(prefs.defaultPass);
+		}
+		if(strlen(pass) > 0) {
+			prefs.defaultPass = strdup(pass);
+		} else {
+			prefs.defaultPass = NULL;
+		}
+
+		if(prefs.defaultNick) {
+			free(prefs.defaultNick);
+		}
+		prefs.defaultNick = strdup(nick);
+
+		SavePrefs(&prefs, altPrefsFile);
+	}
+
+	connectAndSetNick(server, port, nick, pass);
+	XtFree(t);
+	XtFree(nick);
+	XtFree(pass);
+	free(server);
+
+	XtDestroyWidget(dialog);
+}
+
+void closeDialog(Widget widget, XtPointer client_data, XtPointer call_data) {
+	XtDestroyWidget((Widget)client_data);
+}
+
+void makeConnectionDialog() {
+	Widget dialog, form, w, actions;
+	XmString str;
+	Arg args[16];
+	int n = 0;
+
+	n = 0;
+	XtSetArg(args[n], XmNdeleteResponse, XmDESTROY); n++;
+	dialog = (Widget)XmCreateDialogShell(window, "Connect", args, n);
+	form = XtVaCreateWidget("dialogForm", xmFormWidgetClass, dialog, NULL);
+
+	// TODO: Add a drop-down for saved connections
+			
+	str = XmStringCreateLocalized("Connection name:");
+	n = 0;
+	XtSetArg(args[n], XmNlabelString, str); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNalignment, XmALIGNMENT_BEGINNING); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	w = XmCreateLabel(form, "connNameLabel", args, n);
+	XtManageChild(w);
+	XmStringFree(str);
+	w = XtVaCreateManagedWidget("connName", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
+	XmTextFieldSetString(w, "Default Connection");
+
+	str = XmStringCreateLocalized("Server:");
+	n = 0;
+	XtSetArg(args[n], XmNlabelString, str); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, w); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNalignment, XmALIGNMENT_BEGINNING); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	w = XmCreateLabel(form, "serverLabel", args, n);
+	XtManageChild(w);
+	XmStringFree(str);
+	w = XtVaCreateManagedWidget("server", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
+	if(prefs.defaultServer) {
+		XmTextFieldSetString(w, prefs.defaultServer);
+	}
+
+	str = XmStringCreateLocalized("Use SSL");
+	n = 0;
+	XtSetArg(args[n], XmNlabelString, str); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, w); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	XtSetArg(args[n], XmNalignment, XmALIGNMENT_BEGINNING); n++;
+	w = XmCreateToggleButton(form, "useSSL", args, n);
+	XtManageChild(w);
+	XtSetSensitive(w, False);
+	XmStringFree(str);
+
+	str = XmStringCreateLocalized("Pass (if required):");
+	n = 0;
+	XtSetArg(args[n], XmNlabelString, str); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, w); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNalignment, XmALIGNMENT_BEGINNING); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	w = XmCreateLabel(form, "passLabel", args, n);
+	XtManageChild(w);
+	XmStringFree(str);
+	w = XtVaCreateManagedWidget("pass", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
+	if(prefs.defaultPass) {
+		XmTextFieldSetString(w, prefs.defaultPass);
+	}
+
+	str = XmStringCreateLocalized("Preferred Nick:");
+	n = 0;
+	XtSetArg(args[n], XmNlabelString, str); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, w); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNalignment, XmALIGNMENT_BEGINNING); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	w = XmCreateLabel(form, "nickLabel", args, n);
+	XtManageChild(w);
+	XmStringFree(str);
+	w = XtVaCreateManagedWidget("nick", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
+	if(nick) {
+		XmTextFieldSetString(w, nick);
+	}
+
+	str = XmStringCreateLocalized("Save this connection");
+	n = 0;
+	XtSetArg(args[n], XmNlabelString, str); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, w); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	XtSetArg(args[n], XmNalignment, XmALIGNMENT_BEGINNING); n++;
+	XtSetArg(args[n], XmNset, True); n++;
+	w = XmCreateToggleButton(form, "saveConn", args, n);
+	XtManageChild(w);
+	XmStringFree(str);
+
+	actions = XtVaCreateWidget("actionSection", xmFormWidgetClass, form, 
+		XmNtopAttachment, XmATTACH_WIDGET,
+		XmNtopWidget, w,
+		XmNleftAttachment, XmATTACH_FORM,
+		XmNrightAttachment, XmATTACH_FORM,
+		XmNbottomAttachment, XmATTACH_FORM,
+		XmNfractionBase, 5,
+		XmNtopOffset, 8,
+		XmNbottomOffset, 8,
+		NULL);
+
+	n = 0;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_POSITION); n++;
+	XtSetArg(args[n], XmNleftPosition, 1); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_POSITION); n++;
+	XtSetArg(args[n], XmNrightPosition, 2); n++;
+	w = XmCreatePushButton(actions, "OK", args, n);
+	XtManageChild(w);
+	XtAddCallback(w, XmNactivateCallback, connectToServerCallback, dialog);
+	Widget focus = w;
+
+	n = 0;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_POSITION); n++;
+	XtSetArg(args[n], XmNleftPosition, 3); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_POSITION); n++;
+	XtSetArg(args[n], XmNrightPosition, 4); n++;
+	w = XmCreatePushButton(actions, "Cancel", args, n);
+	XtManageChild(w);
+	XtAddCallback(w, XmNactivateCallback, closeDialog, dialog);
+
+	XtVaSetValues(dialog, XmNinitialFocus, form, NULL);
+	XtVaSetValues(form, XmNinitialFocus, actions, NULL);
+	XtVaSetValues(actions, XmNinitialFocus, focus, NULL);
+
+	XtManageChild(actions);
+	XtManageChild(form);
+	XtManageChild(dialog);
 }
 
 void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
@@ -1013,11 +1218,10 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 	switch((int)client_data) {
 	case 0:	// Connect...
 		{
-			Widget dialog;
+			makeConnectionDialog();
+
+/*
 			XmString str = XmStringCreateLocalized("Enter server[:port]");
-			char buffer[1024];
-			Arg args[5];
-			int n = 0;
 			buffer[0] = 0;
 			if(prefs.defaultServer) {
 				strcat(buffer, prefs.defaultServer);
@@ -1035,9 +1239,10 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 			XmStringFree(str);
 			XmStringFree(cur);
 			XtAddCallback(dialog, XmNokCallback, connectToServerCallback, NULL);
-			XtAddCallback(dialog, XmNcancelCallback, closeDialogCallback, NULL);
+			XtAddCallback(dialog, XmNcancelCallback, closeDialog, dialog);
 			XtSetSensitive(XtNameToWidget(dialog, "Help"), False);
 			XtManageChild(dialog);
+*/
 		}
 		break;
 	case 1:	// Set nick...
@@ -1054,7 +1259,7 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 			XmStringFree(str);
 			XmStringFree(cur);
 			XtAddCallback(dialog, XmNokCallback, setNickCallback, NULL);
-			XtAddCallback(dialog, XmNcancelCallback, closeDialogCallback, NULL);
+			XtAddCallback(dialog, XmNcancelCallback, closeDialog, dialog);
 			XtSetSensitive(XtNameToWidget(dialog, "Help"), False);
 			XtManageChild(dialog);
 		}
@@ -1067,16 +1272,17 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 
 void printUsage() {
 	printf("Usage: sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>] [-c]\n");
-	printf("\t-n: Set nick to use\n");
-	printf("\t-s: Set server to connect to\n");
-	printf("\t-p: Set port to connect to\n");
-	printf("\t-f: Specify alternate preferences file\n");
+	printf("\t-n: set Nick to use\n");
+	printf("\t-s: set Server to connect to\n");
+	printf("\t-p: set Port to connect to\n");
+	printf("\t-w: set passWord for server\n");
+	printf("\t-f: specify alternate preferences File\n");
 	printf("\t-c: Connect at startup\n");
 	printf("\n");
 }
 
-void addServerConnection(char *server, int port, char *nick) {
-	connectAndSetNick(server,  port>0?port:6667, nick);
+void addServerConnection(char *server, int port, char *nick, char *pass) {
+	connectAndSetNick(server,  port>0?port:6667, nick, pass);
 }
 
 
@@ -1092,6 +1298,7 @@ int main(int argc, char** argv) {
 	char *cmdServer = NULL;
 	char *cmdPort = NULL;
 	char *cmdNick = NULL;
+	char *cmdPass = NULL;
 	int cmdAutoConnect = 0;
 	int cmdOption;
 
@@ -1100,13 +1307,16 @@ int main(int argc, char** argv) {
 	selectEndX = -1;
 	selectEndY = -1;
 
-	while((cmdOption = getopt(argc, argv, "s:p:n:f:c")) != -1) {
+	while((cmdOption = getopt(argc, argv, "s:p:w:n:f:c")) != -1) {
 		switch(cmdOption) {
 		case 's':
 			cmdServer = strdup(optarg);
 			break;
 		case 'p':
 			cmdPort = strdup(optarg);
+			break;
+		case 'w':
+			cmdPass = strdup(optarg);
 			break;
 		case 'n':
 			cmdNick = strdup(optarg);
@@ -1334,10 +1544,11 @@ int main(int argc, char** argv) {
 	SetupChannelList();
 
 	if(cmdAutoConnect || prefs.connectOnLaunch) {
+		
 		if(cmdServer) {
-			addServerConnection(cmdServer, cmdPort?atoi(cmdPort):0, nick);
+			addServerConnection(cmdServer, cmdPort?atoi(cmdPort):0, nick, cmdPass);
 		} else if(prefs.defaultServer) {
-			addServerConnection(prefs.defaultServer, prefs.defaultPort>0?prefs.defaultPort:6667, nick);
+			addServerConnection(prefs.defaultServer, prefs.defaultPort>0?prefs.defaultPort:6667, nick, prefs.defaultPass);
 		}
 	}
 	XtAppMainLoop(app);
