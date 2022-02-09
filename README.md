@@ -14,12 +14,9 @@ Built and tested with either MIPSPro or [RSE's](https://github.com/sgidevnet/sgu
 
 ## running
 
-Usage: `sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>] [-c]`
-        -n: Set nick to use
-        -s: Set server to connect to
-        -p: Set port to connect to
-        -f: Specify alternate preferences file
-        -c: Connect at startup
+Usage: `sgirc`
+
+That's it. No command line options right now. File->Connect to specify a connection and away you go.
 
 ## configuring
 
