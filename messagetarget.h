@@ -9,9 +9,12 @@
 #define MESSAGETARGET_WHISPER 2
 
 struct Message;
+struct IRCConnection;
 
 struct MessageTarget {
-	char * title;
+	struct IRCConnection *connection;
+	
+	char *title;
 	char *topic;
 	struct Message * * messages;
 	int messageCapacity;
@@ -24,8 +27,9 @@ extern char *  MessageTargetNames[MAX_MESSAGE_TARGETS];
 extern struct MessageTarget MessageTargets[MAX_MESSAGE_TARGETS];
 extern int NumMessageTargets;
 
-int AddMessageTarget(char *targetName, char *title, int type);
-struct MessageTarget * FindMessageTargetByName(char *name);
+int AddMessageTarget(struct IRCConnection *connection, char *targetName, char *title, int type);
+struct MessageTarget * FindMessageTargetByName(struct IRCConnection *connection, char *name);
+
 int RemoveMessageTarget(struct MessageTarget *target);
 void RemoveAllMessageTargets();
 

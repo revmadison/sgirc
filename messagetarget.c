@@ -8,12 +8,13 @@ char *  MessageTargetNames[MAX_MESSAGE_TARGETS];
 struct MessageTarget MessageTargets[MAX_MESSAGE_TARGETS];
 int NumMessageTargets;
 
-int AddMessageTarget(char *targetName, char *title, int type) {
+int AddMessageTarget(struct IRCConnection *connection, char *targetName, char *title, int type) {
 	if (NumMessageTargets >= MAX_MESSAGE_TARGETS) {
 		return -1;
 	}
 
 	MessageTargetNames[NumMessageTargets] = strdup(targetName);
+	MessageTargets[NumMessageTargets].connection = connection;
 	MessageTargets[NumMessageTargets].title = strdup(title);
 	MessageTargets[NumMessageTargets].messages = (struct Message **)malloc(MESSAGE_TARGET_CAPACITY * sizeof(struct Message *));
 	for (int i = 0; i < MESSAGE_TARGET_CAPACITY; i++) {
@@ -46,10 +47,12 @@ void AddMessageToTarget(struct MessageTarget *target, struct Message *message) {
 	target->messageAt++;
 }
 
-struct MessageTarget * FindMessageTargetByName(char *name) {
+struct MessageTarget * FindMessageTargetByName(struct IRCConnection *connection, char *name) {
 	for(int i = 0; i < NumMessageTargets; i++) {
 		if(!strcasecmp(MessageTargetNames[i], name)) {
-			return &MessageTargets[i];
+			if(MessageTargets[i].connection == connection) {
+				return &MessageTargets[i];
+			}
 		}
 	}
 	return NULL;

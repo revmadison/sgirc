@@ -1,3 +1,4 @@
+#include <Xm/ComboBox.h>
 #include <Xm/CutPaste.h>
 #include <Xm/DialogS.h>
 #include <Xm/DrawingA.h>
@@ -57,7 +58,6 @@ static Widget window, chatList, channelList, namesList, scrollbar, titleField;
 static XFontStruct *chatFontStruct;
 static GC chatGC;
 static GC selectedGC;
-static char *nick;
 static int chatFontHeight = 12;
 static int chatTimestampOffset = 60;
 static int chatTextOffset = 116;
@@ -85,6 +85,7 @@ static unsigned long chatBridgeColor;
 static unsigned long chatSelectionColor;
 
 struct IRCConnection irc;
+struct ServerDetails serverDetails;
 
 void SetupNamesList() {
 	XmListDeleteAllItems(namesList);
@@ -235,6 +236,9 @@ int recalculateMessageBreaks() {
 	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
 	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
+	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
+	char *discordBridgeName = details->discordBridgeName;
+
 	XtVaGetValues(chatList, XmNwidth, &chatWidth, NULL);
 
 	if(currentTarget == NULL) {
@@ -246,7 +250,7 @@ int recalculateMessageBreaks() {
 		char *filteredMessage = removeControlCodes(currentTarget->messages[i]->message);
 		int alreadyCounted = 0;
 
-		if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
+		if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
 			char *firstSpace = strchr(filteredMessage, ' ');
 			if(firstSpace) {
 				firstSpace++;
@@ -281,6 +285,7 @@ void recalculateBreaksAndScrollBar() {
 
 void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_data) {
 	char *newtext = XmTextFieldGetString(textField);
+	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
 
 	if (!newtext || !*newtext) {
 		XtFree(newtext); /* XtFree() checks for NULL */
@@ -292,7 +297,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		snprintf(fullmessage, 4095, "PRIVMSG %s :%s", currentTarget->title, newtext);
 		sendIRCCommand(&irc, fullmessage);
 
-		struct Message *message = MessageInit(&irc, nick, currentTarget->title, newtext);
+		struct Message *message = MessageInit(&irc, details->nick, currentTarget->title, newtext);
 		AddMessageToTarget(currentTarget, message);
 
 		recalculateBreaksAndScrollBar();
@@ -301,7 +306,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		snprintf(fullmessage, 4095, "PRIVMSG %s :%s", currentTarget->title, newtext);
 		sendIRCCommand(&irc, fullmessage);
 
-		struct Message *message = MessageInit(&irc, nick, currentTarget->title, newtext);
+		struct Message *message = MessageInit(&irc, details->nick, currentTarget->title, newtext);
 		AddMessageToTarget(currentTarget, message);
 
 		recalculateBreaksAndScrollBar();
@@ -332,7 +337,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		}
 
 		if(strstr(start, "JOIN ") == start || strstr(start, "join ") == start) {
-			int index = AddMessageTarget(start+5, start+5, MESSAGETARGET_CHANNEL);
+			int index = AddMessageTarget(&irc, start+5, start+5, MESSAGETARGET_CHANNEL);
 			if (index >= 0) {
 				MessageTargetMembers[index] = MemberListInit();
 			}
@@ -381,18 +386,18 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 				sendIRCCommand(&irc, fullmessage);
 				skipSendingCommand = 1;
 				
-				msgTarget = FindMessageTargetByName(target);
+				msgTarget = FindMessageTargetByName(&irc, target);
 				if(!msgTarget) {
-					int index = AddMessageTarget(target, target, MESSAGETARGET_WHISPER);
+					int index = AddMessageTarget(&irc, target, target, MESSAGETARGET_WHISPER);
 					if (index >= 0) {
 						MessageTargetMembers[index] = MemberListInit();
-						msgTarget = FindMessageTargetByName(target);
+						msgTarget = FindMessageTargetByName(&irc, target);
 						SetupChannelList();
 					}
 				}
 				if(msgTarget) {
 
-					struct Message *message = MessageInit(&irc, nick, target, text);
+					struct Message *message = MessageInit(&irc, details->nick, target, text);
 					AddMessageToTarget(msgTarget, message);
 
 					if(msgTarget == currentTarget) {
@@ -437,15 +442,17 @@ void channelSelectedCallback(Widget chanList, XtPointer userData, XtPointer call
 void ircClientUpdateCallback(struct IRCConnection *c, struct Message *message, void *userdata) {
 	struct MessageTarget *target;
 	char *actualTarget = message->target;
-	if(!strcmp(actualTarget, nick)) {
+	struct ServerDetails *details = (struct ServerDetails *)c->userData;
+
+	if(!strcmp(actualTarget, details->nick)) {
 		actualTarget = message->source;
 	}
-	target = FindMessageTargetByName(actualTarget);
+	target = FindMessageTargetByName(&irc, actualTarget);
 	if(target == NULL && message->target != NULL) {
-		int index = AddMessageTarget(actualTarget, actualTarget, MESSAGETARGET_WHISPER);
+		int index = AddMessageTarget(&irc, actualTarget, actualTarget, MESSAGETARGET_WHISPER);
 		if (index >= 0) {
 			MessageTargetMembers[index] = MemberListInit();
-			target = FindMessageTargetByName(actualTarget);
+			target = FindMessageTargetByName(&irc, actualTarget);
 			SetupChannelList();
 		}
 	}
@@ -468,7 +475,7 @@ void ircClientUpdateCallback(struct IRCConnection *c, struct Message *message, v
 	
 }
 void ircClientChannelJoinCallback(struct IRCConnection *c, char *channel, char *name, void *userdata) {
-	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
+	struct MessageTarget *messageTarget = FindMessageTargetByName(&irc, channel);
 	if (messageTarget) {
 		AddToMemberList(MessageTargetMembers[messageTarget->index], name);
 		if (messageTarget == currentTarget) {
@@ -477,7 +484,7 @@ void ircClientChannelJoinCallback(struct IRCConnection *c, char *channel, char *
 	}	
 }
 void ircClientChannelPartCallback(struct IRCConnection *c, char *channel, char *name, char *partMessage, void *userdata) {
-	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
+	struct MessageTarget *messageTarget = FindMessageTargetByName(&irc, channel);
 	if (messageTarget) {
 		char buffer[1024];
 		snprintf(buffer, 1023, "** %s has left %s (%s)", name, channel, partMessage?partMessage:"no message");
@@ -508,7 +515,7 @@ void ircClientChannelQuitCallback(struct IRCConnection *c, char *name, char *qui
 	}
 }
 void ircClientChannelTopicCallback(struct IRCConnection *c, char *channel, char *topic, void *userdata) {
-	struct MessageTarget *messageTarget = FindMessageTargetByName(channel);
+	struct MessageTarget *messageTarget = FindMessageTargetByName(&irc, channel);
 	if (messageTarget) {
 
 		SetMessageTargetTopic(messageTarget, topic);
@@ -601,6 +608,9 @@ void updateSelectionIndices() {
 	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
 	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
+	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
+	char *discordBridgeName = details->discordBridgeName;
+
 	if(currentTarget == NULL) {
 		return;
 	}
@@ -619,7 +629,7 @@ void updateSelectionIndices() {
 		int linelen = strlen(line);
 
 		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
-			if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
+			if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
 				processForDiscordBridge(NULL, line, &linestart);
 			}
 		}
@@ -689,6 +699,9 @@ void captureSelection() {
 	int i;
 	int curLen = 0;
 
+	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
+	char *discordBridgeName = details->discordBridgeName;
+
 	if(currentTarget == NULL) {
 		return;
 	}
@@ -705,7 +718,7 @@ void captureSelection() {
 		int linelen = strlen(line);
 
 		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
-			if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
+			if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
 				processForDiscordBridge(NULL, line, &linestart);
 			}
 		}
@@ -781,6 +794,9 @@ void drawChatList() {
 	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
 	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
+	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
+	char *discordBridgeName = details->discordBridgeName;
+
 	if(currentTarget == NULL) {
 		return;
 	}
@@ -810,7 +826,7 @@ void drawChatList() {
 
 
 			if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
-				if(prefs.discordBridgeName && !strcmp(currentTarget->messages[i]->source, prefs.discordBridgeName)) {
+				if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
 					isBridge = processForDiscordBridge(buffer, line, &linestart);
 				}
 				if(!isBridge) {
@@ -949,9 +965,9 @@ char *stringFromXmString(XmString xmString) {
 void connectAndSetNick(char *server, int port, char *nick, char *pass) {
 	disconnectFromServer(&irc);
 	RemoveAllMessageTargets();
-	AddMessageTarget(SERVER_TARGET, server, MESSAGETARGET_SERVER);
+	AddMessageTarget(&irc, SERVER_TARGET, server, MESSAGETARGET_SERVER);
 	MessageTargetMembers[0] = MemberListInit();
-	currentTarget = FindMessageTargetByName(SERVER_TARGET);
+	currentTarget = FindMessageTargetByName(&irc, SERVER_TARGET);
 	SetupChannelList();
 
 	printf("Attempting to connect to %s:%d\n", server, port);
@@ -967,24 +983,21 @@ void connectAndSetNick(char *server, int port, char *nick, char *pass) {
 	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
 	sendIRCCommand(&irc, connbuffer);
 }
+void addServerConnection(char *server, int port, char *nick, char *pass) {
+	connectAndSetNick(server,  port>0?port:6667, nick, pass);
+}
 
 void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	XmSelectionBoxCallbackStruct *cbs;
 	cbs = (XmSelectionBoxCallbackStruct *)call_data;
 	char *newnick = stringFromXmString(cbs->value);
 
-	printf("Changing nick from %s to %s\n", nick, newnick);
-	free(nick);
-	nick = newnick;
-
-	if(prefs.defaultNick) {
-		free(prefs.defaultNick);
-	}
-	prefs.defaultNick = strdup(newnick);
-	SavePrefs(&prefs, altPrefsFile);
+	printf("Changing nick from %s to %s\n", serverDetails.nick, newnick);
+	free(serverDetails.nick);
+	serverDetails.nick = newnick;
 
 	char connbuffer[1024];
-	snprintf(connbuffer, 1023, "NICK %s", nick);
+	snprintf(connbuffer, 1023, "NICK %s", newnick);
 	sendIRCCommand(&irc, connbuffer);
 
 }
@@ -992,16 +1005,20 @@ void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
 void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	Widget dialog = (Widget)client_data;
 	Widget form = XtNameToWidget(dialog, "dialogForm");
+	Widget nameField = XtNameToWidget(form, "connName");
 	Widget serverField = XtNameToWidget(form, "server");
 	Widget passField = XtNameToWidget(form, "pass");
 	Widget nickField = XtNameToWidget(form, "nick");
+	Widget bridgeField = XtNameToWidget(form, "bridge");
 	Widget save = XtNameToWidget(form, "saveConn");
 
 	char *t = XmTextFieldGetString(serverField);
 	char *server = strdup(t);
 	char *portstr = strchr(server, ':');
+	char *connName = XmTextFieldGetString(nameField);
 	char *nick = XmTextFieldGetString(nickField);
 	char *pass = XmTextFieldGetString(passField);
+	char *bridge = XmTextFieldGetString(bridgeField);
 	int port = 6667;
 	if(portstr) {
 		*portstr = 0;
@@ -1009,34 +1026,34 @@ void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer cal
 		port = atoi(portstr);
 	}
 
+	if(!server || !strlen(server) || !nick || !strlen(nick)) {
+		return;
+	}
+
+	if(serverDetails.serverName) free(serverDetails.serverName);
+	serverDetails.serverName = strdup(connName?connName:"New connection");
+	if(serverDetails.host) free(serverDetails.host);
+	serverDetails.host = strdup(server?server:"");
+	serverDetails.port = port;
+	if(serverDetails.pass) free(serverDetails.pass);
+	serverDetails.pass = pass?strdup(pass):NULL;
+	serverDetails.useSSL = 0;
+	if(serverDetails.nick) free(serverDetails.nick);
+	serverDetails.nick = strdup(nick?nick:"");
+	if(serverDetails.discordBridgeName) free(serverDetails.discordBridgeName);
+	serverDetails.discordBridgeName = bridge?strdup(bridge):NULL;
+
 	if(save && XmToggleButtonGetState(save)) {
-		if(prefs.defaultServer) {
-			free(prefs.defaultServer);
-		}
-		prefs.defaultServer = strdup(server);
-		prefs.defaultPort = port;
-
-		if(prefs.defaultPass) {
-			free(prefs.defaultPass);
-		}
-		if(strlen(pass) > 0) {
-			prefs.defaultPass = strdup(pass);
-		} else {
-			prefs.defaultPass = NULL;
-		}
-
-		if(prefs.defaultNick) {
-			free(prefs.defaultNick);
-		}
-		prefs.defaultNick = strdup(nick);
-
+		StoreServerDetails(&prefs, &serverDetails);
 		SavePrefs(&prefs, altPrefsFile);
 	}
 
-	connectAndSetNick(server, port, nick, pass);
+	addServerConnection(server, port, nick, pass);
+
 	XtFree(t);
 	XtFree(nick);
 	XtFree(pass);
+	XtFree(bridge);
 	free(server);
 
 	XtDestroyWidget(dialog);
@@ -1044,6 +1061,41 @@ void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer cal
 
 void closeDialog(Widget widget, XtPointer client_data, XtPointer call_data) {
 	XtDestroyWidget((Widget)client_data);
+}
+
+void selectConnection(Widget widget, XtPointer client_data, XtPointer call_data) {
+	Widget dialog = (Widget)client_data;
+	Widget form = XtNameToWidget(dialog, "dialogForm");
+	Widget nameField = XtNameToWidget(form, "connName");
+	Widget serverField = XtNameToWidget(form, "server");
+	Widget passField = XtNameToWidget(form, "pass");
+	Widget nickField = XtNameToWidget(form, "nick");
+	Widget bridgeField = XtNameToWidget(form, "bridge");
+
+	XmComboBoxCallbackStruct *cb = (XmComboBoxCallbackStruct *)call_data;
+	int index = cb->item_position;
+	if(index == 0) {
+		return;
+	}
+	if(!prefs.servers) {
+		return;
+	}
+
+	for(int i = 0; i < prefs.serverCount; i++) {
+		if(index == 1) {
+			// This is me!
+			XmTextFieldSetString(nameField, prefs.servers[i].serverName);
+			XmTextFieldSetString(serverField, prefs.servers[i].host?prefs.servers[i].host:"");
+			XmTextFieldSetString(passField, prefs.servers[i].pass?prefs.servers[i].pass:"");
+			XmTextFieldSetString(nickField, prefs.servers[i].nick?prefs.servers[i].nick:"");
+			XmTextFieldSetString(bridgeField, prefs.servers[i].discordBridgeName?prefs.servers[i].discordBridgeName:"");
+			return;
+		} else {
+			if(prefs.servers[i].serverName && strlen(prefs.servers[i].serverName) > 0) {
+				index--;
+			}
+		}
+	}
 }
 
 void makeConnectionDialog() {
@@ -1057,12 +1109,38 @@ void makeConnectionDialog() {
 	dialog = (Widget)XmCreateDialogShell(window, "Connect", args, n);
 	form = XtVaCreateWidget("dialogForm", xmFormWidgetClass, dialog, NULL);
 
-	// TODO: Add a drop-down for saved connections
-			
+	XmStringTable connectionsList;
+	int count = 1;
+	connectionsList = (XmStringTable)XtMalloc((prefs.serverCount+1)*sizeof(XmString *));
+	connectionsList[0] = XmStringCreateLocalized("New connection...");
+
+	for(n = 0; n < prefs.serverCount; n++) {
+		if(!prefs.servers[n].serverName || !strlen(prefs.servers[n].serverName)) {
+			continue;
+		}
+		connectionsList[1+n] = XmStringCreateLocalized(prefs.servers[n].serverName);
+		count++;
+	}
+	n = 0;
+	XtSetArg(args[n], XmNitems, connectionsList); n++;
+	XtSetArg(args[n], XmNitemCount, count); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	XtSetArg(args[n], XmNpositionMode, XmZERO_BASED); n++;
+	w = XmCreateDropDownList(form, "conns", args, n);
+	XtManageChild(w);
+	XtAddCallback(w, XmNselectionCallback, selectConnection, dialog);
+
 	str = XmStringCreateLocalized("Connection name:");
 	n = 0;
 	XtSetArg(args[n], XmNlabelString, str); n++;
-	XtSetArg(args[n], XmNtopAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, w); n++;
 	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
 	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
 	XtSetArg(args[n], XmNresizable, 0); n++;
@@ -1074,7 +1152,7 @@ void makeConnectionDialog() {
 	XtManageChild(w);
 	XmStringFree(str);
 	w = XtVaCreateManagedWidget("connName", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
-	XmTextFieldSetString(w, "Default Connection");
+	XmTextFieldSetString(w, "New Connection");
 
 	str = XmStringCreateLocalized("Server:");
 	n = 0;
@@ -1092,9 +1170,6 @@ void makeConnectionDialog() {
 	XtManageChild(w);
 	XmStringFree(str);
 	w = XtVaCreateManagedWidget("server", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
-	if(prefs.defaultServer) {
-		XmTextFieldSetString(w, prefs.defaultServer);
-	}
 
 	str = XmStringCreateLocalized("Use SSL");
 	n = 0;
@@ -1129,9 +1204,6 @@ void makeConnectionDialog() {
 	XtManageChild(w);
 	XmStringFree(str);
 	w = XtVaCreateManagedWidget("pass", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
-	if(prefs.defaultPass) {
-		XmTextFieldSetString(w, prefs.defaultPass);
-	}
 
 	str = XmStringCreateLocalized("Preferred Nick:");
 	n = 0;
@@ -1149,9 +1221,23 @@ void makeConnectionDialog() {
 	XtManageChild(w);
 	XmStringFree(str);
 	w = XtVaCreateManagedWidget("nick", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
-	if(nick) {
-		XmTextFieldSetString(w, nick);
-	}
+
+	str = XmStringCreateLocalized("Discord bridge (if used):");
+	n = 0;
+	XtSetArg(args[n], XmNlabelString, str); n++;
+	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNtopWidget, w); n++;
+	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNresizable, 0); n++;
+	XtSetArg(args[n], XmNalignment, XmALIGNMENT_BEGINNING); n++;
+	XtSetArg(args[n], XmNleftOffset, 4); n++;
+	XtSetArg(args[n], XmNrightOffset, 4); n++;
+	XtSetArg(args[n], XmNtopOffset, 4); n++;
+	w = XmCreateLabel(form, "bridgeLabel", args, n);
+	XtManageChild(w);
+	XmStringFree(str);
+	w = XtVaCreateManagedWidget("bridge", xmTextFieldWidgetClass, form, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_WIDGET, XmNtopWidget, w, XmNleftOffset, 4, XmNrightOffset, 4, NULL);
 
 	str = XmStringCreateLocalized("Save this connection");
 	n = 0;
@@ -1217,39 +1303,13 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 	// client_data is an int for index of menu item
 	switch((int)client_data) {
 	case 0:	// Connect...
-		{
-			makeConnectionDialog();
-
-/*
-			XmString str = XmStringCreateLocalized("Enter server[:port]");
-			buffer[0] = 0;
-			if(prefs.defaultServer) {
-				strcat(buffer, prefs.defaultServer);
-			}
-			if(prefs.defaultPort > 0 && prefs.defaultPort != 6667) {
-				char ports[16];
-				sprintf(ports, ":%d", prefs.defaultPort);
-				strcat(buffer, ports);
-			}
-			XmString cur = XmStringCreate(buffer, "CUR_SERVER");		
-			XtSetArg(args[n], XmNselectionLabelString, str); n++;
-			XtSetArg(args[n], XmNautoUnmanage, True); n++;
-			XtSetArg(args[n], XmNtextString, cur); n++;
-			dialog = (Widget)XmCreatePromptDialog(window, "server_prompt", args, n);
-			XmStringFree(str);
-			XmStringFree(cur);
-			XtAddCallback(dialog, XmNokCallback, connectToServerCallback, NULL);
-			XtAddCallback(dialog, XmNcancelCallback, closeDialog, dialog);
-			XtSetSensitive(XtNameToWidget(dialog, "Help"), False);
-			XtManageChild(dialog);
-*/
-		}
+		makeConnectionDialog();
 		break;
 	case 1:	// Set nick...
 		{
 			Widget dialog;
 			XmString str = XmStringCreateLocalized("Enter your nick:");
-			XmString cur = XmStringCreate(nick, "CUR_NICK");
+			XmString cur = XmStringCreate(serverDetails.nick, "CUR_NICK");
 			Arg args[5];
 			int n = 0;
 			XtSetArg(args[n], XmNselectionLabelString, str); n++;
@@ -1271,20 +1331,14 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 }
 
 void printUsage() {
-	printf("Usage: sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>] [-c]\n");
+	printf("Usage: sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>]\n");
 	printf("\t-n: set Nick to use\n");
 	printf("\t-s: set Server to connect to\n");
 	printf("\t-p: set Port to connect to\n");
 	printf("\t-w: set passWord for server\n");
 	printf("\t-f: specify alternate preferences File\n");
-	printf("\t-c: Connect at startup\n");
 	printf("\n");
 }
-
-void addServerConnection(char *server, int port, char *nick, char *pass) {
-	connectAndSetNick(server,  port>0?port:6667, nick, pass);
-}
-
 
 int main(int argc, char** argv) {
 	Widget      	textField, formLayout, mainWindow, menubar, panes;
@@ -1299,7 +1353,6 @@ int main(int argc, char** argv) {
 	char *cmdPort = NULL;
 	char *cmdNick = NULL;
 	char *cmdPass = NULL;
-	int cmdAutoConnect = 0;
 	int cmdOption;
 
 	selectStartX = -1;
@@ -1324,9 +1377,6 @@ int main(int argc, char** argv) {
 		case 'f':
 			altPrefsFile = strdup(optarg);	// This one is static for the run
 			break;
-		case 'c':
-			cmdAutoConnect = 1;
-			break;
 		case '?':
 			printUsage();
 			return 0;
@@ -1337,14 +1387,19 @@ int main(int argc, char** argv) {
 
 	NumMessageTargets = 0;
 
+	serverDetails.serverName = NULL;
+	serverDetails.host = NULL;
+	serverDetails.port = 0;
+	serverDetails.pass = NULL;
+	serverDetails.useSSL = 0;
+	serverDetails.nick = NULL;
+	serverDetails.discordBridgeName = NULL;
+
 	if(cmdNick) {
-		nick = strdup(cmdNick);
-	} else if(prefs.defaultNick) {
-		nick = strdup(prefs.defaultNick);
+		serverDetails.nick = strdup(cmdNick);
 	} else {
-		nick = strdup("def_sgirc_n");
+		serverDetails.nick = strdup("");
 	}
-	printf("Default nick: %s\n", nick);
 
 	initIRCConnection(&irc);
 	irc.messageCallback = ircClientUpdateCallback;
@@ -1352,6 +1407,7 @@ int main(int argc, char** argv) {
 	irc.partCallback = ircClientChannelPartCallback;
 	irc.quitCallback = ircClientChannelQuitCallback;
 	irc.topicCallback = ircClientChannelTopicCallback;
+	irc.userData = &serverDetails;
 
 	XtSetLanguageProc(NULL, NULL, NULL);
 
@@ -1493,14 +1549,14 @@ int main(int argc, char** argv) {
 		}
 	}
 
-
 	n = 0;
 	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNbottomWidget, textField); n++;
 	XtSetArg(args[n], XmNtopAttachment, XmATTACH_WIDGET); n++;
 	XtSetArg(args[n], XmNtopWidget, titleField); n++;
 	XtSetArg(args[n], XmNleftAttachment, XmATTACH_FORM); n++;
-	XtSetArg(args[n], XmNrightAttachment, XmATTACH_FORM); n++;
+	XtSetArg(args[n], XmNrightAttachment, XmATTACH_WIDGET); n++;
+	XtSetArg(args[n], XmNrightWidget, scrollbar); n++;
 	XtSetArg(args[n], XmNresizable, 1); n++;
 	XtSetArg(args[n], XmNresizePolicy, XmRESIZE_ANY); n++;
 	XtSetArg(args[n], XmNtranslations, XtParseTranslationTable(translations)); n++;
@@ -1538,18 +1594,13 @@ int main(int argc, char** argv) {
 		XChangeWindowAttributes(XtDisplay(chatList), XtWindow(chatList), CWBitGravity, &attrs);
 	}
 
-	AddMessageTarget(SERVER_TARGET, "Server", MESSAGETARGET_SERVER);
+	AddMessageTarget(&irc, SERVER_TARGET, "Server", MESSAGETARGET_SERVER);
 	MessageTargetMembers[0] = MemberListInit();
-	currentTarget = FindMessageTargetByName(SERVER_TARGET);
+	currentTarget = FindMessageTargetByName(&irc, SERVER_TARGET);
 	SetupChannelList();
 
-	if(cmdAutoConnect || prefs.connectOnLaunch) {
-		
-		if(cmdServer) {
-			addServerConnection(cmdServer, cmdPort?atoi(cmdPort):0, nick, cmdPass);
-		} else if(prefs.defaultServer) {
-			addServerConnection(prefs.defaultServer, prefs.defaultPort>0?prefs.defaultPort:6667, nick, prefs.defaultPass);
-		}
+	if(cmdServer) {
+		addServerConnection(cmdServer, cmdPort?atoi(cmdPort):0, cmdNick, cmdPass);
 	}
 	XtAppMainLoop(app);
 

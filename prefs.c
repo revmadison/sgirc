@@ -14,13 +14,10 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 	}
 
 	// Setup default prefs first
+	prefs->servers = NULL;
+	prefs->serverCount = 0;
 	prefs->showTimestamp = 1;
-	prefs->defaultServer = NULL;
-	prefs->defaultPort = -1;
-	prefs->defaultPass = NULL;
-	prefs->defaultNick = NULL;
 	prefs->saveLogs = 1;
-	prefs->discordBridgeName = NULL;
 	prefs->connectOnLaunch = 0;
 
 	if(prefsFile) {
@@ -62,37 +59,103 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 		return PREFS_LOAD_BADFILE;
 	}
 
+	// First parse the servers
+	cJSON *servers = cJSON_GetObjectItem(prefsJSON, "servers");
+	if(servers && cJSON_IsArray(servers)) {
+		prefs->serverCount = cJSON_GetArraySize(servers);
+		prefs->servers = (struct ServerDetails *)malloc(prefs->serverCount * sizeof(struct ServerDetails));
+		for(int i = 0; i < prefs->serverCount; i++) {
+			cJSON *entry = cJSON_GetArrayItem(servers, i);
+			cJSON *v;
+
+			prefs->servers[i].serverName = NULL;
+			prefs->servers[i].host = NULL;
+			prefs->servers[i].port = 0;
+			prefs->servers[i].pass = NULL;
+			prefs->servers[i].useSSL = 0;
+			prefs->servers[i].nick = NULL;
+			prefs->servers[i].discordBridgeName = NULL;
+
+			v = cJSON_GetObjectItem(entry, "serverName");
+			if(!v || cJSON_IsNull(v)) {
+				continue;
+			}
+			prefs->servers[i].serverName = strdup(cJSON_GetStringValue(v));
+
+			v= cJSON_GetObjectItem(entry, "host");
+			if(v&& !cJSON_IsNull(v)) {
+				prefs->servers[i].host = strdup(cJSON_GetStringValue(v));
+			}
+			v = cJSON_GetObjectItem(entry, "port");
+			if(v && cJSON_IsNumber(v)) {
+				prefs->servers[i].port = (int)cJSON_GetNumberValue(v);
+			}
+			v = cJSON_GetObjectItem(entry, "useSSL");
+			if(v && cJSON_IsBool(v)) {
+				prefs->servers[i].useSSL = cJSON_IsTrue(v) ? 1 : 0;
+			}
+			v = cJSON_GetObjectItem(entry, "pass");
+			if(v && !cJSON_IsNull(v)) {
+				prefs->servers[i].pass = strdup(cJSON_GetStringValue(v));
+			}
+			v = cJSON_GetObjectItem(entry, "nick");
+			if(v && !cJSON_IsNull(v)) {
+				prefs->servers[i].nick = strdup(cJSON_GetStringValue(v));
+			}
+			v = cJSON_GetObjectItem(entry, "discordBridgeName");
+			if(v && !cJSON_IsNull(v)) {
+				prefs->servers[i].discordBridgeName = strdup(cJSON_GetStringValue(v));
+			}
+		}
+	}
+
+
+
+	// Then the app-wide preferences
 	cJSON *showTimestamp = cJSON_GetObjectItem(prefsJSON, "showTimestamp");
 	if(showTimestamp && cJSON_IsBool(showTimestamp)) {
 		prefs->showTimestamp = cJSON_IsTrue(showTimestamp) ? 1 : 0;
-	}
-	cJSON *defaultServer = cJSON_GetObjectItem(prefsJSON, "defaultServer");
-	if(defaultServer && !cJSON_IsNull(defaultServer)) {
-		prefs->defaultServer = strdup(cJSON_GetStringValue(defaultServer));
-	}
-	cJSON *defaultPort = cJSON_GetObjectItem(prefsJSON, "defaultPort");
-	if(defaultPort && cJSON_IsNumber(defaultPort)) {
-		prefs->defaultPort = (int)cJSON_GetNumberValue(defaultPort);
-	}
-	cJSON *defaultPass = cJSON_GetObjectItem(prefsJSON, "defaultPass");
-	if(defaultPass && !cJSON_IsNull(defaultPass)) {
-		prefs->defaultPass = strdup(cJSON_GetStringValue(defaultPass));
-	}
-	cJSON *defaultNick = cJSON_GetObjectItem(prefsJSON, "defaultNick");
-	if(defaultNick && !cJSON_IsNull(defaultNick)) {
-		prefs->defaultNick = strdup(cJSON_GetStringValue(defaultNick));
 	}
 	cJSON *saveLogs = cJSON_GetObjectItem(prefsJSON, "saveLogs");
 	if(saveLogs && cJSON_IsBool(saveLogs)) {
 		prefs->saveLogs = cJSON_IsTrue(saveLogs) ? 1 : 0;
 	}
-	cJSON *discordBridgeName = cJSON_GetObjectItem(prefsJSON, "discordBridgeName");
-	if(discordBridgeName && !cJSON_IsNull(discordBridgeName)) {
-		prefs->discordBridgeName = strdup(cJSON_GetStringValue(discordBridgeName));
-	}
 	cJSON *connectOnLaunch = cJSON_GetObjectItem(prefsJSON, "connectOnLaunch");
 	if(connectOnLaunch && cJSON_IsBool(connectOnLaunch)) {
 		prefs->connectOnLaunch = cJSON_IsTrue(connectOnLaunch) ? 1 : 0;
+	}
+
+
+	// Finally any deprecated options
+	cJSON *defaultServer = cJSON_GetObjectItem(prefsJSON, "defaultServer");
+	if(defaultServer && !cJSON_IsNull(defaultServer)) {
+		prefs->serverCount = 1;
+		prefs->servers = (struct ServerDetails *)malloc(prefs->serverCount * sizeof(struct ServerDetails));
+		
+		prefs->servers[0].serverName = strdup("Default connection");
+		prefs->servers[0].host = strdup(cJSON_GetStringValue(defaultServer));
+		prefs->servers[0].port = 0;
+		prefs->servers[0].pass = NULL;
+		prefs->servers[0].useSSL = 0;
+		prefs->servers[0].nick = NULL;
+		prefs->servers[0].discordBridgeName = NULL;
+
+		cJSON *defaultPort = cJSON_GetObjectItem(prefsJSON, "defaultPort");
+		if(defaultPort && cJSON_IsNumber(defaultPort)) {
+			prefs->servers[0].port = (int)cJSON_GetNumberValue(defaultPort);
+		}
+		cJSON *defaultPass = cJSON_GetObjectItem(prefsJSON, "defaultPass");
+		if(defaultPass && !cJSON_IsNull(defaultPass)) {
+			prefs->servers[0].pass = strdup(cJSON_GetStringValue(defaultPass));
+		}
+		cJSON *defaultNick = cJSON_GetObjectItem(prefsJSON, "defaultNick");
+		if(defaultNick && !cJSON_IsNull(defaultNick)) {
+			prefs->servers[0].nick = strdup(cJSON_GetStringValue(defaultNick));
+		}
+		cJSON *discordBridgeName = cJSON_GetObjectItem(prefsJSON, "discordBridgeName");
+		if(discordBridgeName && !cJSON_IsNull(discordBridgeName)) {
+			prefs->servers[0].discordBridgeName = strdup(cJSON_GetStringValue(discordBridgeName));
+		}
 	}
 
 	cJSON_Delete(prefsJSON);
@@ -123,29 +186,45 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile) {
 	}
 
 	cJSON *prefsJSON = cJSON_CreateObject();
+
+	if(prefs->serverCount > 0) {
+		cJSON *servers = cJSON_CreateArray();
+
+		for(int i = 0; i < prefs->serverCount; i++) {
+			if(!prefs->servers[i].serverName || !prefs->servers[i].host) {
+				continue;
+			}
+
+			cJSON *entry = cJSON_CreateObject();
+			cJSON_AddStringToObject(entry, "serverName", prefs->servers[i].serverName);
+			cJSON_AddStringToObject(entry, "host", prefs->servers[i].host);
+			cJSON_AddNumberToObject(entry, "port", prefs->servers[i].port);
+
+			if(prefs->servers[i].pass) {
+				cJSON_AddStringToObject(entry, "pass", prefs->servers[i].pass);
+			} else {
+				cJSON_AddNullToObject(entry, "pass");
+			}
+			cJSON_AddBoolToObject(entry, "useSSL", prefs->servers[i].useSSL?1:0);
+			if(prefs->servers[i].nick) {
+				cJSON_AddStringToObject(entry, "nick", prefs->servers[i].nick);
+			} else {
+				cJSON_AddNullToObject(entry, "nick");
+			}
+			if(prefs->servers[i].discordBridgeName) {
+				cJSON_AddStringToObject(entry, "discordBridgeName", prefs->servers[i].discordBridgeName);
+			} else {
+				cJSON_AddNullToObject(entry, "discordBridgeName");
+			}
+
+			cJSON_AddItemToArray(servers, entry);
+		}
+
+		cJSON_AddItemToObject(prefsJSON, "servers", servers);
+	}
+
 	cJSON_AddBoolToObject(prefsJSON, "showTimestamp", prefs->showTimestamp?1:0);
-	if(prefs->defaultServer) {
-		cJSON_AddStringToObject(prefsJSON, "defaultServer", prefs->defaultServer);
-	} else {
-		cJSON_AddNullToObject(prefsJSON, "defaultServer");
-	}
-	cJSON_AddNumberToObject(prefsJSON, "defaultPort", prefs->defaultPort);
-	if(prefs->defaultPass) {
-		cJSON_AddStringToObject(prefsJSON, "defaultPass", prefs->defaultPass);
-	} else {
-		cJSON_AddNullToObject(prefsJSON, "defaultPass");
-	}
-	if(prefs->defaultNick) {
-		cJSON_AddStringToObject(prefsJSON, "defaultNick", prefs->defaultNick);
-	} else {
-		cJSON_AddNullToObject(prefsJSON, "defaultNick");
-	}
 	cJSON_AddBoolToObject(prefsJSON, "saveLogs", prefs->saveLogs?1:0);
-	if(prefs->discordBridgeName) {
-		cJSON_AddStringToObject(prefsJSON, "discordBridgeName", prefs->discordBridgeName);
-	} else {
-		cJSON_AddNullToObject(prefsJSON, "discordBridgeName");
-	}
 	cJSON_AddBoolToObject(prefsJSON, "connectOnLaunch", prefs->connectOnLaunch?1:0);
 
 	char *prefsString = cJSON_Print(prefsJSON);
@@ -167,4 +246,60 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile) {
 	
 	return PREFS_SUCCESS;
 }
+
+void StoreServerDetails(struct Prefs *prefs, struct ServerDetails *details) {
+	int i;
+	for(i = 0; i < prefs->serverCount; i++) {
+		if(prefs->servers[i].serverName && details->serverName && !strcmp(details->serverName, prefs->servers[i].serverName)) {
+			// Replacing an existing setting!
+			if(details->host && strlen(details->host) > 0) {
+				if(prefs->servers[i].host) {
+					free(prefs->servers[i].host);
+				}
+				prefs->servers[i].host = strdup(details->host);
+			}
+			if(details->nick && strlen(details->nick) > 0) {
+				if(prefs->servers[i].nick) {
+					free(prefs->servers[i].nick);
+				}
+				prefs->servers[i].nick = strdup(details->nick);
+			}
+			prefs->servers[i].port = details->port;
+			prefs->servers[i].useSSL = details->useSSL;
+			if(prefs->servers[i].pass) {
+				free(prefs->servers[i].pass);
+				prefs->servers[i].pass = NULL;
+			}
+			if(details->pass && strlen(details->pass) > 0) {
+				prefs->servers[i].pass = strdup(details->pass);
+			}
+			if(prefs->servers[i].discordBridgeName) {
+				free(prefs->servers[i].discordBridgeName);
+				prefs->servers[i].discordBridgeName = NULL;
+			}
+			prefs->servers[i].discordBridgeName = details->discordBridgeName ? strdup(details->discordBridgeName) : NULL;
+
+			return;
+		}
+	}
+
+	if(!prefs->servers) {
+		prefs->serverCount = 1;
+		prefs->servers = (struct ServerDetails *)malloc(prefs->serverCount * sizeof(struct ServerDetails));
+		i = 0;
+	} else {
+		i = prefs->serverCount;
+		prefs->serverCount++;
+		prefs->servers = (struct ServerDetails *)realloc(prefs->servers, prefs->serverCount * sizeof(struct ServerDetails));
+	}
+
+	prefs->servers[i].serverName = details->serverName ? strdup(details->serverName) : strdup("Default connection");
+	prefs->servers[i].host = details->host ? strdup(details->host) : NULL;
+	prefs->servers[i].port = details->port;
+	prefs->servers[i].pass = (details->pass && strlen(details->pass) > 0) ? strdup(details->pass) : NULL;
+	prefs->servers[i].useSSL = details->useSSL;
+	prefs->servers[i].nick = details->nick ? strdup(details->nick) : NULL;
+	prefs->servers[i].discordBridgeName = details->discordBridgeName ? strdup(details->discordBridgeName) : NULL;
+}
+
 

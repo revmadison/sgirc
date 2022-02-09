@@ -16,11 +16,11 @@ struct IRCConnection {
 	int activeSocket;
 	int connected;
 
-	char * readBuffer;
+	char *readBuffer;
 	int readBufferSize;
 	int readBufferAt;
 
-	char * commandBuffer;
+	char *commandBuffer;
 	int commandBufferSize;
 	int commandBufferAt;
 
@@ -29,6 +29,8 @@ struct IRCConnection {
 	IRCChannelPartCallback partCallback;
 	IRCChannelQuitCallback quitCallback;
 	IRCChannelTopicCallback topicCallback;
+
+	void *userData;
 };
 
 void initIRCConnection(struct IRCConnection *c);

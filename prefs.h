@@ -11,19 +11,29 @@
 #define PREFS_SAVE_FAILURE 1
 #define PREFS_SAVE_CANTOPEN 5
 
-struct Prefs {
-	int showTimestamp;
-	char *defaultServer;
-	int defaultPort;
-	char *defaultPass;
-	char *defaultNick;
-	int saveLogs;
+struct ServerDetails {
+	char *serverName;
+	char *host;
+	int port;
+	char *pass;
+	int useSSL;
+	char *nick;
 	char *discordBridgeName;
+};
+
+struct Prefs {
+	struct ServerDetails *servers;
+	int serverCount;
+
+	int showTimestamp;
+	int saveLogs;
 	int connectOnLaunch;
 };
 
 int LoadPrefs(struct Prefs *prefs, char *prefsFile);
 int SavePrefs(struct Prefs *prefs, char *prefsFile);
+
+void StoreServerDetails(struct Prefs *prefs, struct ServerDetails *details);
 
 #endif
 
