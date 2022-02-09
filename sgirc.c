@@ -1083,12 +1083,21 @@ void selectConnection(Widget widget, XtPointer client_data, XtPointer call_data)
 
 	for(int i = 0; i < prefs.serverCount; i++) {
 		if(index == 1) {
+			char *server = prefs.servers[i].host?prefs.servers[i].host:"";
+			char *buffer = (char *)malloc(strlen(server)+32);
+			strcpy(buffer, server);
+			if(prefs.servers[i].port > 0 && prefs.servers[i].port != 6667) {
+				sprintf(buffer, "%s:%d", server, prefs.servers[i].port);
+			} else {
+				strcpy(buffer, server);
+			}
 			// This is me!
 			XmTextFieldSetString(nameField, prefs.servers[i].serverName);
-			XmTextFieldSetString(serverField, prefs.servers[i].host?prefs.servers[i].host:"");
+			XmTextFieldSetString(serverField, buffer);
 			XmTextFieldSetString(passField, prefs.servers[i].pass?prefs.servers[i].pass:"");
 			XmTextFieldSetString(nickField, prefs.servers[i].nick?prefs.servers[i].nick:"");
 			XmTextFieldSetString(bridgeField, prefs.servers[i].discordBridgeName?prefs.servers[i].discordBridgeName:"");
+			free(buffer);
 			return;
 		} else {
 			if(prefs.servers[i].serverName && strlen(prefs.servers[i].serverName) > 0) {
@@ -1360,6 +1369,7 @@ int main(int argc, char** argv) {
 	selectEndX = -1;
 	selectEndY = -1;
 
+	/* Disabled for now while I figure this out with multi-server settings
 	while((cmdOption = getopt(argc, argv, "s:p:w:n:f:c")) != -1) {
 		switch(cmdOption) {
 		case 's':
@@ -1382,6 +1392,7 @@ int main(int argc, char** argv) {
 			return 0;
 		}
 	}
+	*/
 	LoadPrefs(&prefs, altPrefsFile);
 	SavePrefs(&prefs, altPrefsFile);
 
