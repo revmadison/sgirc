@@ -26,6 +26,9 @@
 #include "memberlist.h"
 #include "prefs.h"
 
+#ifndef MIN
+#define MIN(a,b) (a <= b ? a : b)
+#endif
 #ifndef MAX
 #define MAX(a,b) (a >= b ? a : b)
 #endif
@@ -84,10 +87,25 @@ static unsigned long chatNickColor;
 static unsigned long chatBridgeColor;
 static unsigned long chatSelectionColor;
 
-struct IRCConnection irc;
-struct ServerDetails serverDetails;
+struct ServerConnection {
+	struct IRCConnection *connection;
+	struct ServerDetails *serverDetails;
+};
+
+static struct ServerConnection *connections = NULL;
+static int connectionCount = 0;
+
+struct ChannelListEntry {
+	struct MessageTarget *target;
+};
+static struct ChannelListEntry *channelListEntries = NULL;
+static int channelListCount = 0;
 
 void SetupNamesList() {
+	if(!currentTarget) {
+		return;
+	}
+
 	XmListDeleteAllItems(namesList);
 
 	struct MemberList *memberList = MessageTargetMembers[currentTarget->index];
@@ -127,25 +145,79 @@ void SetupNamesList() {
 }
 void SetupChannelList()
 {
+	int index = 0;
+
 	XmListDeleteAllItems(channelList);
 
-	for (int i = 0; i < NumMessageTargets; i++) {
-		XmString str = XmStringCreate(MessageTargets[i].title, MessageTargetHasUpdate[i]?"UnreadChannel":"ReadChannel");
-		XmListAddItemUnselected(channelList, str, i+1);
-		XmStringFree(str);
+	if(connectionCount == 0) {
+		if(channelListEntries) {
+			free(channelListEntries);
+			channelListEntries = NULL;
+		}
+		channelListCount = 0;
+		return;
 	}
 
+	if(channelListCount != NumMessageTargets) {
+		channelListCount = NumMessageTargets;
+		channelListEntries = (struct ChannelListEntry *)realloc(channelListEntries, channelListCount*sizeof(struct ChannelListEntry));
+	}
+
+	for(int c = 0; c < NumMessageTargets; c++) {
+		if(!strcmp(MessageTargetNames[c], SERVER_TARGET)) {
+			channelListEntries[index].target = &MessageTargets[c];
+
+			XmString str = XmStringCreate(MessageTargets[c].title, MessageTargetHasUpdate[c]?"UnreadChannel":"ReadChannel");
+			XmListAddItemUnselected(channelList, str, index+1);
+			XmStringFree(str);
+			index++;
+
+			for(int i = 0; i < NumMessageTargets; i++) {
+				if(MessageTargets[i].connection != MessageTargets[c].connection) {
+					continue;
+				}
+				if(!strcmp(MessageTargetNames[i], SERVER_TARGET)) {
+					continue;
+				}
+
+				char *buffer = (char *)malloc(strlen(MessageTargets[i].title)+4);
+				sprintf(buffer, "  %s", MessageTargets[i].title);
+				XmString str = XmStringCreate(buffer, MessageTargetHasUpdate[i]?"UnreadChannel":"ReadChannel");
+				XmListAddItemUnselected(channelList, str, index+1);
+				XmStringFree(str);
+				free(buffer);
+				channelListEntries[index].target = &MessageTargets[i];
+				index++;
+			}
+		}
+	}
 }
 void RefreshChannelList() {
-	for (int i = 0; i < NumMessageTargets; i++) {
-		int wasSelected = XmListPosSelected(channelList, i+1);
+	for(int c = 0; c < channelListCount; c++) {
+		for(int i = 0; i < NumMessageTargets; i++) {
+			if(&MessageTargets[i] != channelListEntries[c].target) {
+				continue;
+			}
 
-		XmString str = XmStringCreate(MessageTargets[i].title, MessageTargetHasUpdate[i]?"UnreadChannel":"ReadChannel");
-		XmListReplaceItemsPos(channelList, &str, 1, i+1);
-		XmStringFree(str);
+			int wasSelected = XmListPosSelected(channelList, c+1);
 
-		if(wasSelected) {
-			XmListSelectPos(channelList, i+1, FALSE);
+			XmString str;
+
+			if(!strcmp(MessageTargetNames[i], SERVER_TARGET)) {
+				str = XmStringCreate(MessageTargets[i].title, 	MessageTargetHasUpdate[i]?"UnreadChannel":"ReadChannel");
+			} else {
+				char *buffer = (char *)malloc(strlen(MessageTargets[i].title)+4);
+				sprintf(buffer, "  %s", MessageTargets[i].title);
+				str = XmStringCreate(buffer, 	MessageTargetHasUpdate[i]?"UnreadChannel":"ReadChannel");
+				free(buffer);
+			}
+			XmListReplaceItemsPos(channelList, &str, 1, c+1);
+			XmStringFree(str);
+
+			if(wasSelected) {
+				XmListSelectPos(channelList, c+1, FALSE);
+			}
+
 		}
 	}
 }
@@ -235,15 +307,15 @@ int recalculateMessageBreaks() {
 	int totalLines = 0;
 	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
 	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
-
-	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
-	char *discordBridgeName = details->discordBridgeName;
-
-	XtVaGetValues(chatList, XmNwidth, &chatWidth, NULL);
-
+	
 	if(currentTarget == NULL) {
 		return 0;
 	}
+
+	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
+	char *discordBridgeName = details->discordBridgeName;
+
+	XtVaGetValues(chatList, XmNwidth, &chatWidth, NULL);
 
 	for (i = 0; i < currentTarget->messageAt; i++) {
 		int usableWidth = chatWidth - (((currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL)?textOffset:nameOffset)+20);
@@ -285,7 +357,12 @@ void recalculateBreaksAndScrollBar() {
 
 void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_data) {
 	char *newtext = XmTextFieldGetString(textField);
-	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
+
+	if(currentTarget == NULL) {
+		return;
+	}
+
+	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
 
 	if (!newtext || !*newtext) {
 		XtFree(newtext); /* XtFree() checks for NULL */
@@ -295,18 +372,18 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 	if(currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL && newtext[0] != '/') {
 		char fullmessage[4096];
 		snprintf(fullmessage, 4095, "PRIVMSG %s :%s", currentTarget->title, newtext);
-		sendIRCCommand(&irc, fullmessage);
+		sendIRCCommand(currentTarget->connection, fullmessage);
 
-		struct Message *message = MessageInit(&irc, details->nick, currentTarget->title, newtext);
+		struct Message *message = MessageInit(currentTarget->connection, details->nick, currentTarget->title, newtext);
 		AddMessageToTarget(currentTarget, message);
 
 		recalculateBreaksAndScrollBar();
 	} else if(currentTarget != NULL && currentTarget->type == MESSAGETARGET_WHISPER && newtext[0] != '/') {
 		char fullmessage[4096];
 		snprintf(fullmessage, 4095, "PRIVMSG %s :%s", currentTarget->title, newtext);
-		sendIRCCommand(&irc, fullmessage);
+		sendIRCCommand(currentTarget->connection, fullmessage);
 
-		struct Message *message = MessageInit(&irc, details->nick, currentTarget->title, newtext);
+		struct Message *message = MessageInit(currentTarget->connection, details->nick, currentTarget->title, newtext);
 		AddMessageToTarget(currentTarget, message);
 
 		recalculateBreaksAndScrollBar();
@@ -320,7 +397,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 			if (currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL) {
 				char buffer[1024];
 				snprintf(buffer, 1023, "PART %s", currentTarget->title);
-				sendIRCCommand(&irc, buffer);
+				sendIRCCommand(currentTarget->connection, buffer);
 			}
 
 			int removingIndex = currentTarget->index;
@@ -337,7 +414,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		}
 
 		if(strstr(start, "JOIN ") == start || strstr(start, "join ") == start) {
-			int index = AddMessageTarget(&irc, start+5, start+5, MESSAGETARGET_CHANNEL);
+			int index = AddMessageTarget(currentTarget->connection, start+5, start+5, MESSAGETARGET_CHANNEL);
 			if (index >= 0) {
 				MessageTargetMembers[index] = MemberListInit();
 			}
@@ -352,7 +429,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 				} else {
 					snprintf(buffer, 1023, "PART %s", currentTarget->title);
 				}
-				sendIRCCommand(&irc, buffer);
+				sendIRCCommand(currentTarget->connection, buffer);
 
 				int removingIndex = currentTarget->index;
 				int newCount = RemoveMessageTarget(currentTarget);
@@ -383,21 +460,21 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 				text = firstSpace + 1;
 
 				snprintf(fullmessage, 4095, "PRIVMSG %s :%s", target, text);
-				sendIRCCommand(&irc, fullmessage);
+				sendIRCCommand(currentTarget->connection, fullmessage);
 				skipSendingCommand = 1;
 				
-				msgTarget = FindMessageTargetByName(&irc, target);
+				msgTarget = FindMessageTargetByName(currentTarget->connection, target);
 				if(!msgTarget) {
-					int index = AddMessageTarget(&irc, target, target, MESSAGETARGET_WHISPER);
+					int index = AddMessageTarget(currentTarget->connection, target, target, MESSAGETARGET_WHISPER);
 					if (index >= 0) {
 						MessageTargetMembers[index] = MemberListInit();
-						msgTarget = FindMessageTargetByName(&irc, target);
+						msgTarget = FindMessageTargetByName(currentTarget->connection, target);
 						SetupChannelList();
 					}
 				}
 				if(msgTarget) {
 
-					struct Message *message = MessageInit(&irc, details->nick, target, text);
+					struct Message *message = MessageInit(currentTarget->connection, details->nick, target, text);
 					AddMessageToTarget(msgTarget, message);
 
 					if(msgTarget == currentTarget) {
@@ -410,7 +487,7 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 		}
 
 		if(!skipSendingCommand) {
-			sendIRCCommand(&irc, start);
+			sendIRCCommand(currentTarget->connection, start);
 		}
 	}
 	
@@ -429,9 +506,9 @@ void switchToMessageTarget(struct MessageTarget *target) {
 }
 
 void channelSelectedCallback(Widget chanList, XtPointer userData, XtPointer callData) {
-	for (int i = 0; i < NumMessageTargets; i++) {
+	for (int i = 0; i < channelListCount; i++) {
 		if (XmListPosSelected(chanList, i+1)) {
-			switchToMessageTarget(&MessageTargets[i]);
+			switchToMessageTarget(channelListEntries[i].target);
 			return;
 		}
 	}
@@ -447,12 +524,12 @@ void ircClientUpdateCallback(struct IRCConnection *c, struct Message *message, v
 	if(!strcmp(actualTarget, details->nick)) {
 		actualTarget = message->source;
 	}
-	target = FindMessageTargetByName(&irc, actualTarget);
+	target = FindMessageTargetByName(c, actualTarget);
 	if(target == NULL && message->target != NULL) {
-		int index = AddMessageTarget(&irc, actualTarget, actualTarget, MESSAGETARGET_WHISPER);
+		int index = AddMessageTarget(c, actualTarget, actualTarget, MESSAGETARGET_WHISPER);
 		if (index >= 0) {
 			MessageTargetMembers[index] = MemberListInit();
-			target = FindMessageTargetByName(&irc, actualTarget);
+			target = FindMessageTargetByName(c, actualTarget);
 			SetupChannelList();
 		}
 	}
@@ -475,7 +552,7 @@ void ircClientUpdateCallback(struct IRCConnection *c, struct Message *message, v
 	
 }
 void ircClientChannelJoinCallback(struct IRCConnection *c, char *channel, char *name, void *userdata) {
-	struct MessageTarget *messageTarget = FindMessageTargetByName(&irc, channel);
+	struct MessageTarget *messageTarget = FindMessageTargetByName(c, channel);
 	if (messageTarget) {
 		AddToMemberList(MessageTargetMembers[messageTarget->index], name);
 		if (messageTarget == currentTarget) {
@@ -484,11 +561,11 @@ void ircClientChannelJoinCallback(struct IRCConnection *c, char *channel, char *
 	}	
 }
 void ircClientChannelPartCallback(struct IRCConnection *c, char *channel, char *name, char *partMessage, void *userdata) {
-	struct MessageTarget *messageTarget = FindMessageTargetByName(&irc, channel);
+	struct MessageTarget *messageTarget = FindMessageTargetByName(c, channel);
 	if (messageTarget) {
 		char buffer[1024];
 		snprintf(buffer, 1023, "** %s has left %s (%s)", name, channel, partMessage?partMessage:"no message");
-		struct Message *message = MessageInit(&irc, name, messageTarget->title, buffer);
+		struct Message *message = MessageInit(c, name, messageTarget->title, buffer);
 		message->type = MESSAGE_TYPE_SERVERMESSAGE;
 		AddMessageToTarget(messageTarget, message);
 
@@ -504,7 +581,7 @@ void ircClientChannelQuitCallback(struct IRCConnection *c, char *name, char *qui
 			struct MessageTarget *messageTarget = &MessageTargets[i];
 			char buffer[1024];
 			snprintf(buffer, 1023, "** %s has quit (%s)", name, quitMessage?quitMessage:"no message");
-			struct Message *message = MessageInit(&irc, name, messageTarget->title, buffer);
+			struct Message *message = MessageInit(c, name, messageTarget->title, buffer);
 			message->type = MESSAGE_TYPE_SERVERMESSAGE;
 			AddMessageToTarget(messageTarget, message);
 
@@ -515,7 +592,7 @@ void ircClientChannelQuitCallback(struct IRCConnection *c, char *name, char *qui
 	}
 }
 void ircClientChannelTopicCallback(struct IRCConnection *c, char *channel, char *topic, void *userdata) {
-	struct MessageTarget *messageTarget = FindMessageTargetByName(&irc, channel);
+	struct MessageTarget *messageTarget = FindMessageTargetByName(c, channel);
 	if (messageTarget) {
 
 		SetMessageTargetTopic(messageTarget, topic);
@@ -529,7 +606,9 @@ void ircClientChannelTopicCallback(struct IRCConnection *c, char *channel, char 
 void updateTimerCallback(XtPointer clientData, XtIntervalId *timer) {
 	XtAppContext * app = (XtAppContext *)clientData;
 
-	updateIRCClient(&irc, (void *)chatList);
+	for(int i = 0; i < connectionCount; i++) {
+		updateIRCClient(connections[i].connection, (void *)chatList);
+	}
 
 	XtAppAddTimeOut(*app, 50, updateTimerCallback, app);
 }
@@ -608,12 +687,12 @@ void updateSelectionIndices() {
 	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
 	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
-	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
-	char *discordBridgeName = details->discordBridgeName;
-
 	if(currentTarget == NULL) {
 		return;
 	}
+
+	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
+	char *discordBridgeName = details->discordBridgeName;
 
 	XtVaGetValues(scrollbar, XmNvalue, &scrollValue, NULL);
 	XtVaGetValues(chatList, XmNwidth, &curWidth, XmNheight, &curHeight, NULL);
@@ -699,12 +778,12 @@ void captureSelection() {
 	int i;
 	int curLen = 0;
 
-	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
-	char *discordBridgeName = details->discordBridgeName;
-
 	if(currentTarget == NULL) {
 		return;
 	}
+
+	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
+	char *discordBridgeName = details->discordBridgeName;
 
 	XtVaGetValues(scrollbar, XmNvalue, &scrollValue, NULL);
 	y -= scrollValue;
@@ -794,12 +873,12 @@ void drawChatList() {
 	int nameOffset = prefs.showTimestamp ? chatTimestampOffset+8 : 4;
 	int textOffset = prefs.showTimestamp ? chatTextOffset+chatTimestampOffset+12 : chatTextOffset+8;
 
-	struct ServerDetails *details = (struct ServerDetails *)irc.userData;
-	char *discordBridgeName = details->discordBridgeName;
-
 	if(currentTarget == NULL) {
 		return;
 	}
+
+	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
+	char *discordBridgeName = details->discordBridgeName;
 
 	XtVaGetValues(scrollbar, XmNvalue, &scrollValue, NULL);
 	XtVaGetValues(chatList, XmNwidth, &curWidth, XmNheight, &curHeight, NULL);
@@ -881,7 +960,7 @@ void drawChatList() {
 				}
 
 				if(!drewLine) {
-						XDrawString(display, window, gc, offset, y, &line[linestart], linewidth);
+						XDrawString(display, window, gc, offset, y, &line[linestart], MIN(linewidth, strlen(&line[linestart])));
 				}
 			}
 			linestart += linewidth;
@@ -962,29 +1041,45 @@ char *stringFromXmString(XmString xmString) {
 	return strdup(buffer);
 }
 
-void connectAndSetNick(char *server, int port, char *nick, char *pass) {
-	disconnectFromServer(&irc);
-	RemoveAllMessageTargets();
-	AddMessageTarget(&irc, SERVER_TARGET, server, MESSAGETARGET_SERVER);
-	MessageTargetMembers[0] = MemberListInit();
-	currentTarget = FindMessageTargetByName(&irc, SERVER_TARGET);
+void connectAndSetNick(struct IRCConnection *connection, char *server, int port, char *nick, char *pass) {
+	int i = AddMessageTarget(connection, SERVER_TARGET, server, MESSAGETARGET_SERVER);
+	currentTarget = FindMessageTargetByName(connection, SERVER_TARGET);
 	SetupChannelList();
+	if(i >= 0) {
+		MessageTargetMembers[i] = MemberListInit();
+	}
 
 	printf("Attempting to connect to %s:%d\n", server, port);
-	connectToServer(&irc, server, port);
+	connectToServer(connection, server, port);
 
 	char connbuffer[1024];
 	if(pass && strlen(pass) > 0) {
 		snprintf(connbuffer, 1023, "PASS %s", pass);
-		sendIRCCommand(&irc, connbuffer);
+		sendIRCCommand(connection, connbuffer);
 	}
 	snprintf(connbuffer, 1023, "NICK %s", nick);
-	sendIRCCommand(&irc, connbuffer);
+	sendIRCCommand(connection, connbuffer);
 	snprintf(connbuffer, 1023, "USER %s 0 * :%s", nick, nick);
-	sendIRCCommand(&irc, connbuffer);
+	sendIRCCommand(connection, connbuffer);
 }
-void addServerConnection(char *server, int port, char *nick, char *pass) {
-	connectAndSetNick(server,  port>0?port:6667, nick, pass);
+void addServerConnection(struct ServerDetails *serverDetails) {
+	struct IRCConnection *connection = (struct IRCConnection *)malloc(sizeof(struct IRCConnection));
+
+	connectionCount++;
+	connections = (struct ServerConnection *)realloc(connections, connectionCount*sizeof(struct ServerConnection));
+
+	connections[connectionCount-1].connection = connection;
+	connections[connectionCount-1].serverDetails = serverDetails;
+
+	initIRCConnection(connection);
+	connection->messageCallback = ircClientUpdateCallback;
+	connection->joinCallback = ircClientChannelJoinCallback;
+	connection->partCallback = ircClientChannelPartCallback;
+	connection->quitCallback = ircClientChannelQuitCallback;
+	connection->topicCallback = ircClientChannelTopicCallback;
+	connection->userData = serverDetails;
+	
+	connectAndSetNick(connection, serverDetails->host, serverDetails->port>0?serverDetails->port:6667, serverDetails->nick, serverDetails->pass);
 }
 
 void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
@@ -992,14 +1087,19 @@ void setNickCallback(Widget widget, XtPointer client_data, XtPointer call_data) 
 	cbs = (XmSelectionBoxCallbackStruct *)call_data;
 	char *newnick = stringFromXmString(cbs->value);
 
-	printf("Changing nick from %s to %s\n", serverDetails.nick, newnick);
-	free(serverDetails.nick);
-	serverDetails.nick = newnick;
+	if(currentTarget == NULL) {
+		return;
+	}
+
+	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
+
+	printf("Changing nick from %s to %s\n", details->nick, newnick);
+	free(details->nick);
+	details->nick = newnick;
 
 	char connbuffer[1024];
 	snprintf(connbuffer, 1023, "NICK %s", newnick);
-	sendIRCCommand(&irc, connbuffer);
-
+	sendIRCCommand(currentTarget->connection, connbuffer);
 }
 
 void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
@@ -1030,25 +1130,21 @@ void connectToServerCallback(Widget widget, XtPointer client_data, XtPointer cal
 		return;
 	}
 
-	if(serverDetails.serverName) free(serverDetails.serverName);
-	serverDetails.serverName = strdup(connName?connName:"New connection");
-	if(serverDetails.host) free(serverDetails.host);
-	serverDetails.host = strdup(server?server:"");
-	serverDetails.port = port;
-	if(serverDetails.pass) free(serverDetails.pass);
-	serverDetails.pass = pass?strdup(pass):NULL;
-	serverDetails.useSSL = 0;
-	if(serverDetails.nick) free(serverDetails.nick);
-	serverDetails.nick = strdup(nick?nick:"");
-	if(serverDetails.discordBridgeName) free(serverDetails.discordBridgeName);
-	serverDetails.discordBridgeName = bridge?strdup(bridge):NULL;
+	struct ServerDetails *serverDetails = (struct ServerDetails *)malloc(sizeof(struct ServerDetails));;
+	serverDetails->serverName = strdup(connName?connName:"New connection");
+	serverDetails->host = strdup(server?server:"");
+	serverDetails->port = port;
+	serverDetails->pass = pass?strdup(pass):NULL;
+	serverDetails->useSSL = 0;
+	serverDetails->nick = strdup(nick?nick:"");
+	serverDetails->discordBridgeName = bridge?strdup(bridge):NULL;
 
 	if(save && XmToggleButtonGetState(save)) {
-		StoreServerDetails(&prefs, &serverDetails);
+		StoreServerDetails(&prefs, serverDetails);
 		SavePrefs(&prefs, altPrefsFile);
 	}
 
-	addServerConnection(server, port, nick, pass);
+	addServerConnection(serverDetails);
 
 	XtFree(t);
 	XtFree(nick);
@@ -1318,15 +1414,21 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 		{
 			Widget dialog;
 			XmString str = XmStringCreateLocalized("Enter your nick:");
-			XmString cur = XmStringCreate(serverDetails.nick, "CUR_NICK");
+			XmString cur;
 			Arg args[5];
 			int n = 0;
 			XtSetArg(args[n], XmNselectionLabelString, str); n++;
 			XtSetArg(args[n], XmNautoUnmanage, True); n++;
-			XtSetArg(args[n], XmNtextString, cur); n++;
+			if(currentTarget != NULL) {
+				struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
+				cur = XmStringCreate(details->nick, "CUR_NICK");
+				XtSetArg(args[n], XmNtextString, cur); n++;
+			}
 			dialog = (Widget)XmCreatePromptDialog(window, "nick_prompt", args, n);
 			XmStringFree(str);
-			XmStringFree(cur);
+			if(currentTarget != NULL) {
+				XmStringFree(cur);
+			}
 			XtAddCallback(dialog, XmNokCallback, setNickCallback, NULL);
 			XtAddCallback(dialog, XmNcancelCallback, closeDialog, dialog);
 			XtSetSensitive(XtNameToWidget(dialog, "Help"), False);
@@ -1357,68 +1459,15 @@ int main(int argc, char** argv) {
 	String			translations = "<Btn1Down>: selection(start) ManagerGadgetArm()\n<Btn1Up>: selection(stop) ManagerGadgetActivate()\n<Btn1Motion>: selection(move) ManagerGadgetButtonMotion()";
 	XtActionsRec	actions;
 
-	// Command line args
-	char *cmdServer = NULL;
-	char *cmdPort = NULL;
-	char *cmdNick = NULL;
-	char *cmdPass = NULL;
-	int cmdOption;
-
 	selectStartX = -1;
 	selectStartY = -1;
 	selectEndX = -1;
 	selectEndY = -1;
 
-	/* Disabled for now while I figure this out with multi-server settings
-	while((cmdOption = getopt(argc, argv, "s:p:w:n:f:c")) != -1) {
-		switch(cmdOption) {
-		case 's':
-			cmdServer = strdup(optarg);
-			break;
-		case 'p':
-			cmdPort = strdup(optarg);
-			break;
-		case 'w':
-			cmdPass = strdup(optarg);
-			break;
-		case 'n':
-			cmdNick = strdup(optarg);
-			break;
-		case 'f':
-			altPrefsFile = strdup(optarg);	// This one is static for the run
-			break;
-		case '?':
-			printUsage();
-			return 0;
-		}
-	}
-	*/
 	LoadPrefs(&prefs, altPrefsFile);
 	SavePrefs(&prefs, altPrefsFile);
 
 	NumMessageTargets = 0;
-
-	serverDetails.serverName = NULL;
-	serverDetails.host = NULL;
-	serverDetails.port = 0;
-	serverDetails.pass = NULL;
-	serverDetails.useSSL = 0;
-	serverDetails.nick = NULL;
-	serverDetails.discordBridgeName = NULL;
-
-	if(cmdNick) {
-		serverDetails.nick = strdup(cmdNick);
-	} else {
-		serverDetails.nick = strdup("");
-	}
-
-	initIRCConnection(&irc);
-	irc.messageCallback = ircClientUpdateCallback;
-	irc.joinCallback = ircClientChannelJoinCallback;
-	irc.partCallback = ircClientChannelPartCallback;
-	irc.quitCallback = ircClientChannelQuitCallback;
-	irc.topicCallback = ircClientChannelTopicCallback;
-	irc.userData = &serverDetails;
 
 	XtSetLanguageProc(NULL, NULL, NULL);
 
@@ -1605,14 +1654,8 @@ int main(int argc, char** argv) {
 		XChangeWindowAttributes(XtDisplay(chatList), XtWindow(chatList), CWBitGravity, &attrs);
 	}
 
-	AddMessageTarget(&irc, SERVER_TARGET, "Server", MESSAGETARGET_SERVER);
-	MessageTargetMembers[0] = MemberListInit();
-	currentTarget = FindMessageTargetByName(&irc, SERVER_TARGET);
 	SetupChannelList();
 
-	if(cmdServer) {
-		addServerConnection(cmdServer, cmdPort?atoi(cmdPort):0, cmdNick, cmdPass);
-	}
 	XtAppMainLoop(app);
 
 	return 0;
