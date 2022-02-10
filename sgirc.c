@@ -987,6 +987,33 @@ void selection(Widget widget, XEvent *event, String *args, Cardinal *num_args) {
 		return;
 	}
 
+	if(!strcmp(args[0], "scrollUp")) {
+		int value, max, inc, newValue;
+		XtVaGetValues(scrollbar, XmNmaximum, &max, XmNvalue, &value, XmNpageIncrement, &inc, NULL);
+		newValue = value-inc;
+		if(newValue < 0) {
+			newValue = 0;
+		}
+		if(newValue != value) {
+			XtVaSetValues(scrollbar, XmNvalue, newValue, NULL);
+			forceRedraw();
+		}
+		return;
+	}
+	if(!strcmp(args[0], "scrollDown")) {
+		int value, max, inc, slider, newValue;
+		XtVaGetValues(scrollbar, XmNmaximum, &max, XmNvalue, &value, XmNpageIncrement, &inc, XmNsliderSize, &slider, NULL);
+		newValue = value+inc;
+		if(newValue > (max-slider)) {
+			newValue = max-slider;
+		}
+		if(newValue != value) {
+			XtVaSetValues(scrollbar, XmNvalue, newValue, NULL);
+			forceRedraw();
+		}
+		return;
+	}
+
 	if(strcmp(args[0], "start")) {
 		// If it's not start, it's either move or end
 		selectEndX = event->xbutton.x;
@@ -1167,15 +1194,19 @@ void selectConnection(Widget widget, XtPointer client_data, XtPointer call_data)
 	Widget passField = XtNameToWidget(form, "pass");
 	Widget nickField = XtNameToWidget(form, "nick");
 	Widget bridgeField = XtNameToWidget(form, "bridge");
+	Widget save = XtNameToWidget(form, "saveConn");
 
 	XmComboBoxCallbackStruct *cb = (XmComboBoxCallbackStruct *)call_data;
 	int index = cb->item_position;
 	if(index == 0) {
+		XmToggleButtonSetState(save, True, False);
 		return;
 	}
 	if(!prefs.servers) {
 		return;
 	}
+
+	XmToggleButtonSetState(save, False, False);
 
 	for(int i = 0; i < prefs.serverCount; i++) {
 		if(index == 1) {
@@ -1456,7 +1487,10 @@ int main(int argc, char** argv) {
 	Arg         	args[32];
 	int         	n = 0;
 	XGCValues		gcv;
-	String			translations = "<Btn1Down>: selection(start) ManagerGadgetArm()\n<Btn1Up>: selection(stop) ManagerGadgetActivate()\n<Btn1Motion>: selection(move) ManagerGadgetButtonMotion()";
+	String			translations = "<Btn1Down>: selection(start) ManagerGadgetArm()\n<Btn1Up>: selection(stop) ManagerGadgetActivate()\n<Btn1Motion>: selection(move) ManagerGadgetButtonMotion()\n<Btn4Down>: selection(scrollUp)\n<Btn5Down>: selection(scrollDown)";
+	String			scrollAugTranslations = "<Btn4Down>: IncrementUpOrLeft(0) IncrementUpOrLeft(1)\n <Btn5Down>: IncrementDownOrRight(0) IncrementDownOrRight(1)\n";
+	String			listAugTranslations = "<Btn4Down>: ListPrevPage()\n <Btn5Down>: ListNextPage()\n";
+
 	XtActionsRec	actions;
 
 	selectStartX = -1;
@@ -1490,6 +1524,7 @@ int main(int argc, char** argv) {
 	XtSetArg(args[n], XmNskipAdjust, 1); n++;
 	channelList = XmCreateScrolledList(panes, "channelList", args, n);
 	XtManageChild(channelList);
+	XtAugmentTranslations(channelList, XtParseTranslationTable(listAugTranslations));
 
 	formLayout = XtVaCreateWidget("formLayout", xmFormWidgetClass, panes, XmNpaneMinimum, 250, NULL);
 
@@ -1527,6 +1562,7 @@ int main(int argc, char** argv) {
 	XtSetArg(args[n], XmNskipAdjust, 1); n++;
 	namesList = XmCreateScrolledList(panes, "namesList", args, n);
 	XtManageChild(namesList);
+	XtAugmentTranslations(namesList, XtParseTranslationTable(listAugTranslations));
 
 	titleField = XtVaCreateManagedWidget("titleField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_FORM, XmNeditable, 0, NULL);
 
@@ -1542,6 +1578,7 @@ int main(int argc, char** argv) {
 	XtSetArg(args[n], XmNincrement, 6); n++;
 	scrollbar = XmCreateScrollBar(formLayout, "scrollbar", args, n);
 	XtManageChild(scrollbar);
+	XtAugmentTranslations(scrollbar, XtParseTranslationTable(scrollAugTranslations));
 
 	Display *display = XtDisplay(formLayout);
 	Screen *screen = XtScreen(formLayout);
