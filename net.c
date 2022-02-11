@@ -246,7 +246,7 @@ unsigned char *fetchURL(char *url, char *headers, int *outBufferLen) {
 
 	if(strstr(url, "http://") == url) {
 		isHttp = 1;
-
+		free(host);
 		host = strdup(url+7);
 		port = strchr(host, ':');
 		slash = strchr(host, '/');
@@ -297,7 +297,7 @@ unsigned char *fetchURL(char *url, char *headers, int *outBufferLen) {
 
 	if(ctx.encoding == ENCODING_CHUNKED) {
 		retBuffer = readChunkedBody(&ctx, outBufferLen);
-	} else if(ctx.contentLength > 0) {
+	} else if(ctx.contentLength > 0 && ctx.contentLength < (64*1024*1024)) {
 		retBuffer = readBody(&ctx, outBufferLen);
 	}
 	killSSLContext(&ctx);
