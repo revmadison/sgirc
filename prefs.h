@@ -28,6 +28,8 @@ struct Prefs {
 	int showTimestamp;
 	int saveLogs;
 	int connectOnLaunch;
+
+	int imagePreviewHeight;
 };
 
 int LoadPrefs(struct Prefs *prefs, char *prefsFile);

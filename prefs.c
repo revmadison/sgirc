@@ -19,6 +19,7 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 	prefs->showTimestamp = 1;
 	prefs->saveLogs = 1;
 	prefs->connectOnLaunch = 0;
+	prefs->imagePreviewHeight = 0;
 
 	if(prefsFile) {
 		fileName = strdup(prefsFile);
@@ -125,6 +126,10 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 		prefs->connectOnLaunch = cJSON_IsTrue(connectOnLaunch) ? 1 : 0;
 	}
 
+	cJSON *imagePreviewHeight = cJSON_GetObjectItem(prefsJSON, "imagePreviewHeight");
+	if(imagePreviewHeight && cJSON_IsNumber(imagePreviewHeight)) {
+		prefs->imagePreviewHeight = cJSON_GetNumberValue(imagePreviewHeight);
+	}
 
 	// Finally any deprecated options
 	cJSON *defaultServer = cJSON_GetObjectItem(prefsJSON, "defaultServer");
@@ -226,6 +231,7 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile) {
 	cJSON_AddBoolToObject(prefsJSON, "showTimestamp", prefs->showTimestamp?1:0);
 	cJSON_AddBoolToObject(prefsJSON, "saveLogs", prefs->saveLogs?1:0);
 	cJSON_AddBoolToObject(prefsJSON, "connectOnLaunch", prefs->connectOnLaunch?1:0);
+	cJSON_AddNumberToObject(prefsJSON, "imagePreviewHeight", prefs->imagePreviewHeight);
 
 	char *prefsString = cJSON_Print(prefsJSON);
 	cJSON_Delete(prefsJSON);

@@ -18,13 +18,17 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <regex.h>
 #include <time.h>
 #include <unistd.h>
+#include "imgpreview.h"
 #include "ircclient.h"
 #include "messagetarget.h"
 #include "message.h"
 #include "memberlist.h"
 #include "prefs.h"
+
+#define URL_REGEX "https:/\\{1,3\\}[a-z0-9.-]\\{1,\\}[.][a-z]\\{2,4\\}[^[:space:]()<>]*"
 
 #ifndef MIN
 #define MIN(a,b) (a <= b ? a : b)
@@ -34,6 +38,8 @@
 #endif
 
 #pragma set woff 3970
+
+#define MAX_LINES_PER_MESSAGE 32
 
 String fallbacks[] = {
 	"*sgiMode: true",
@@ -56,6 +62,8 @@ struct MessageTarget *currentTarget;
 struct MemberList *MessageTargetMembers[MAX_MESSAGE_TARGETS];
 int MessageTargetHasUpdate[MAX_MESSAGE_TARGETS];
 
+struct ImagePreviewRequest *pendingPreviewRequests = NULL;
+
 static XtAppContext  app;
 static Widget window, chatList, channelList, namesList, scrollbar, titleField;
 static XFontStruct *chatFontStruct;
@@ -66,9 +74,6 @@ static int chatTimestampOffset = 60;
 static int chatTextOffset = 116;
 
 static char *altPrefsFile = NULL;
-
-static int LinesPerMessage[MESSAGE_TARGET_CAPACITY];
-static int LineBreaksPerMessage[MESSAGE_TARGET_CAPACITY][16];
 
 // Positioning for pixel values of selection
 static int selectStartX, selectStartY, selectEndX, selectEndY;
@@ -100,6 +105,12 @@ struct ChannelListEntry {
 };
 static struct ChannelListEntry *channelListEntries = NULL;
 static int channelListCount = 0;
+
+static regex_t urlRegex;
+
+void FreeImagePreview(Pixmap pixmap) {
+	XFreePixmap(XtDisplay(chatList), pixmap);
+}
 
 void SetupNamesList() {
 	if(!currentTarget) {
@@ -258,11 +269,94 @@ char *removeControlCodes(char *in) {
 	return out;
 }
 
-int calcMessageBreaks(char *line, int usableWidth, int index) {
-	int numLines = 0;
+int processForDiscordBridge(char *buffer, const char *line, int *linestart) {
+	if(line[0] != '<') {
+		return 0;
+	}
 
-	int linelen = strlen(line);
+	char *nameClose = strstr(line, "> ");
+	if(nameClose) {
+		if(buffer) {
+			int at = 0;
+			int len = (int)(nameClose-line);
+			for(int i = 0; i <= len; i++) {
+				if(line[i] == 0x03) {
+					i+=2;
+				} else if(line[i] >= 0x01 && line[i] <= 0x0f) {
+					// do nothing
+				} else {
+					buffer[at] = line[i];
+					at++;
+				}
+				buffer[at] = 0;
+			}
+		}
+		*linestart = (nameClose-line)+2;
+		return 1;
+	} else {
+		return 0;
+	}
+}
+
+int prepareMessageForDisplay(struct Message *message, int width) {
+	if(message->brokenWidth == width && message->display != NULL && message->lineCount > 0) {
+		return message->lineCount;
+	}
+
+	if(!message->lineBreaks) {
+		message->lineBreaks = (int *)malloc(MAX_LINES_PER_MESSAGE*sizeof(int));
+	}
+	message->brokenWidth = width;
+	message->lineCount = 0;
+
+	if(!message->display) {
+		struct ServerDetails *details = (struct ServerDetails *)message->connection->userData;
+		char *bridge = details->discordBridgeName;
+		int start = 0;
+		regmatch_t urlMatch;
+
+		if((message->type == MESSAGE_TYPE_NORMAL) && 
+				(bridge != NULL) && (!strcmp(message->source, bridge))) {
+			processForDiscordBridge(NULL, message->message, &start);
+			message->display = removeControlCodes(&message->message[start]);
+		} else {
+			message->display = removeControlCodes(message->message);
+		}
+
+		if(!regexec(&urlRegex, message->display, 1, &urlMatch, 0)) {
+			int len = (int)(urlMatch.rm_eo - urlMatch.rm_so);
+			char *url = (char *)malloc(len + 1);
+			memcpy(url, message->display, len);
+			url[len] = 0;
+
+			if(prefs.imagePreviewHeight > 0 && len > 4 && url[len-4] == '.' && 
+					((url[len-3] == 'J' || url[len-3] == 'j') &&
+					 (url[len-2] == 'P' || url[len-2] == 'p') && 
+					 (url[len-1] == 'G' || url[len-1] == 'g')) ||
+					((url[len-3] == 'P' || url[len-3] == 'p') && 
+					 (url[len-2] == 'N' || url[len-2] == 'n') && 
+					 (url[len-1] == 'G' || url[len-1] == 'g'))) {
+				// This is an image, let's grab it!
+				struct ImagePreviewRequest *req = initImagePreviewRequest(message, url, prefs.imagePreviewHeight*2, prefs.imagePreviewHeight);
+
+				if(!pendingPreviewRequests) {
+					pendingPreviewRequests = req;
+				} else {
+					struct ImagePreviewRequest *at = pendingPreviewRequests;
+					while(at->next) {
+						at = at->next;
+					}
+					at->next = req;
+				}
+			}
+
+			message->url = url;
+		}
+	}
+
+	char *line = message->display;
 	int linestart = 0;
+	int linelen = strlen(line);
 	int linewidth = 0;
 	int lastspace = -1;
 	int endoftext;
@@ -272,9 +366,11 @@ int calcMessageBreaks(char *line, int usableWidth, int index) {
 		linewidth = 0;
 		endoftext = 0;
 
-		while(XTextWidth(chatFontStruct, &line[linestart], linewidth) < usableWidth) {
+		while(XTextWidth(chatFontStruct, &line[linestart], linewidth) < width) {
 			linewidth++;
-			if(line[linestart+linewidth] == ' ') lastspace = linewidth;
+			if(line[linestart+linewidth] == ' ') {
+				lastspace = linewidth;
+			}
 			if(linewidth+linestart >= linelen) {
 				endoftext = 1;
 				break;
@@ -290,15 +386,12 @@ int calcMessageBreaks(char *line, int usableWidth, int index) {
 			linewidth--;
 		}
 
-		LineBreaksPerMessage[index][numLines] = linewidth;
+		message->lineBreaks[message->lineCount] = linewidth;
+		message->lineCount++;
 		linestart += linewidth;
-		numLines++;
-		if(numLines > 16) break;		
+		if(message->lineCount >= MAX_LINES_PER_MESSAGE) break;		
 	}
-
-	LinesPerMessage[index] = numLines;
-
-	return numLines;
+	return message->lineCount;
 }
 
 int recalculateMessageBreaks() {
@@ -312,29 +405,12 @@ int recalculateMessageBreaks() {
 		return 0;
 	}
 
-	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
-	char *discordBridgeName = details->discordBridgeName;
-
 	XtVaGetValues(chatList, XmNwidth, &chatWidth, NULL);
 
 	for (i = 0; i < currentTarget->messageAt; i++) {
 		int usableWidth = chatWidth - (((currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL)?textOffset:nameOffset)+20);
-		char *filteredMessage = removeControlCodes(currentTarget->messages[i]->message);
-		int alreadyCounted = 0;
 
-		if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
-			char *firstSpace = strchr(filteredMessage, ' ');
-			if(firstSpace) {
-				firstSpace++;
-				totalLines += calcMessageBreaks(firstSpace, usableWidth, i);
-				alreadyCounted = 1;
-			}
-		}
-		if(!alreadyCounted) {
-			totalLines += calcMessageBreaks(filteredMessage, usableWidth, i);
-		}
-
-		free(filteredMessage);
+		totalLines += prepareMessageForDisplay(currentTarget->messages[i], usableWidth);
 	}
 	return totalLines;
 }
@@ -348,6 +424,14 @@ void recalculateBreaksAndScrollBar() {
 	totalLines = recalculateMessageBreaks();
 	chatHeight = MAX(windowHeight, (totalLines+1)*chatFontHeight);
 
+	if(currentTarget != NULL) {
+		for(int i = 0; i < currentTarget->messageAt; i++) {
+			if(currentTarget->messages[i]->imagePreviewHeight) {
+				chatHeight += (chatFontHeight+currentTarget->messages[i]->imagePreviewHeight);
+			}
+		}
+
+	}
 	//printf("totalLines=%d\tfontHeight=%d\twinH=%d\tchatH=%d\n", totalLines,chatFontHeight,windowHeight,chatHeight);
 
 	XtVaSetValues(scrollbar, XmNmaximum, chatHeight, XmNsliderSize, windowHeight, XmNvalue, chatHeight-windowHeight, XmNpageIncrement, windowHeight>>1, NULL);
@@ -602,12 +686,51 @@ void ircClientChannelTopicCallback(struct IRCConnection *c, char *channel, char 
 	}	
 }
 
+Pixmap pixmapFromData(char *pixbuf, int w, int h) {
+	XImage *ximage = XCreateImage(XtDisplay(chatList), DefaultVisualOfScreen(XtScreen(chatList)), 24, ZPixmap, 0, pixbuf, w, h, 32, w*4);
+
+	Pixmap pixmap = XCreatePixmap(XtDisplay(chatList), XtWindow(chatList), w, h, 24);
+	GC gc = XCreateGC(XtDisplay(chatList), pixmap, 0, 0);
+	XPutImage(XtDisplay(chatList), pixmap, gc, ximage, 0, 0, 0, 0, w, h);
+
+	XDestroyImage(ximage);
+	XFreeGC(XtDisplay(chatList), gc);
+	return pixmap;
+}
+
 
 void updateTimerCallback(XtPointer clientData, XtIntervalId *timer) {
 	XtAppContext * app = (XtAppContext *)clientData;
 
 	for(int i = 0; i < connectionCount; i++) {
 		updateIRCClient(connections[i].connection, (void *)chatList);
+	}
+
+	if(pendingPreviewRequests) {
+		struct ImagePreviewRequest *req = pendingPreviewRequests;
+
+		if(!req->started) {
+			fetchImagePreview(req);
+		} else if(req->completed) {
+			if(req->pixmapData) {
+				if(!req->cancelled) {
+					Pixmap pixmap = pixmapFromData(req->pixmapData, req->pixmapWidth, req->pixmapHeight);
+					if(pixmap != None) {
+						req->message->imagePreview = pixmap;
+						req->message->imagePreviewWidth = req->pixmapWidth;
+						req->message->imagePreviewHeight = req->pixmapHeight;
+						recalculateBreaksAndScrollBar();
+					} else {
+						req->message->imagePreviewWidth = 0;
+						req->message->imagePreviewHeight = 0;
+					}
+				}
+				free(req->pixmapData);
+			}
+			pendingPreviewRequests = req->next;
+			free(req->url);
+			free(req);
+		}
 	}
 
 	XtAppAddTimeOut(*app, 50, updateTimerCallback, app);
@@ -654,25 +777,6 @@ static void loseSelectionCallback(Widget w, Atom *selection) {
 	forceRedraw();
 }
 
-int processForDiscordBridge(char *buffer, const char *line, int *linestart) {
-	if(line[0] != '<') {
-		return 0;
-	}
-
-	char *nameClose = strstr(line, "> ");
-	if(nameClose) {
-		if(buffer) {
-			nameClose[1] = 0;
-			snprintf(buffer, 255, "%s", line);
-			nameClose[1] = ' ';
-		}
-		*linestart = (nameClose-line)+2;
-		return 1;
-	} else {
-		return 0;
-	}
-}
-
 void updateSelectionIndices() {
 	Display *display = XtDisplay(chatList);
 	Drawable window = XtWindow(chatList);
@@ -691,9 +795,6 @@ void updateSelectionIndices() {
 		return;
 	}
 
-	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
-	char *discordBridgeName = details->discordBridgeName;
-
 	XtVaGetValues(scrollbar, XmNvalue, &scrollValue, NULL);
 	XtVaGetValues(chatList, XmNwidth, &curWidth, XmNheight, &curHeight, NULL);
 
@@ -702,26 +803,26 @@ void updateSelectionIndices() {
 	selectedText[0] = 0;
 
 	for(i = 0; i < currentTarget->messageAt; i++) {
+		struct Message *message = currentTarget->messages[i];
+		char *line = message->display;
 		int linestart = 0;
 		int linewidth = 0;
-		char *line = removeControlCodes(currentTarget->messages[i]->message);
 		int linelen = strlen(line);
 
-		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
-			if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
-				processForDiscordBridge(NULL, line, &linestart);
-			}
+		if(!line) {
+			printf("*** Error trying to select in unprepared message! ***\n");
+			continue;
 		}
 
-		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
-			int offset = (currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
+		for(int lineOfMessage = 0; lineOfMessage < message->lineCount; lineOfMessage++) {
+			int offset = (message->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
 			int yline = (y+scrollValue-chatFontHeight)/chatFontHeight;
 
 			if(yline > selectEndLine) {
 				break;
 			}
 
-			linewidth = LineBreaksPerMessage[i][lineOfMessage];
+			linewidth = message->lineBreaks[lineOfMessage];
 
 			if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX)) {
 				int preSel = 0;
@@ -765,10 +866,12 @@ void updateSelectionIndices() {
 				}
 			}
 			linestart += linewidth;
-			y += chatFontHeight;
-				
+			y += chatFontHeight;				
 		}
-		free(line);
+		if(message->imagePreviewHeight) {
+			y += chatFontHeight;
+			y += message->imagePreviewHeight;
+		}
 	}
 }
 
@@ -782,34 +885,26 @@ void captureSelection() {
 		return;
 	}
 
-	struct ServerDetails *details = (struct ServerDetails *)currentTarget->connection->userData;
-	char *discordBridgeName = details->discordBridgeName;
-
 	XtVaGetValues(scrollbar, XmNvalue, &scrollValue, NULL);
 	y -= scrollValue;
 
 	selectedText[0] = 0;
 
 	for(i = 0; i < currentTarget->messageAt; i++) {
+		struct Message *message = currentTarget->messages[i];
+		char *line = message->display;
 		int linestart = 0;
 		int linewidth = 0;
-		char *line = removeControlCodes(currentTarget->messages[i]->message);
 		int linelen = strlen(line);
 
-		if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
-			if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
-				processForDiscordBridge(NULL, line, &linestart);
-			}
-		}
-
-		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
+		for(int lineOfMessage = 0; lineOfMessage < message->lineCount; lineOfMessage++) {
 			int yline = (y+scrollValue-chatFontHeight)/chatFontHeight;
 
 			if(yline > selectEndLine) {
 				break;
 			}
 
-			linewidth = LineBreaksPerMessage[i][lineOfMessage];
+			linewidth = message->lineBreaks[lineOfMessage];
 
 			if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX)) {
 				if(yline == selectStartLine && yline == selectEndLine) {
@@ -846,7 +941,11 @@ void captureSelection() {
 			y += chatFontHeight;
 				
 		}
-		free(line);
+		if(message->imagePreviewHeight) {
+			y += chatFontHeight;
+			y += message->imagePreviewHeight;
+		}
+
 	}
 
 	if(strlen(selectedText) > 1) {
@@ -890,26 +989,27 @@ void drawChatList() {
 	}
 
 	for(i = 0; i < currentTarget->messageAt; i++) {
+		struct Message *message = currentTarget->messages[i];
+		char *line = message->display;
+
 		int linestart = 0;
 		int linewidth = 0;
-		char *line = removeControlCodes(currentTarget->messages[i]->message);
 		int linelen = strlen(line);
 		int isBridge = 0;
 
 		if(y > -chatFontHeight) {
 			if(prefs.showTimestamp) {
 				XSetForeground(display, gc, chatTimeColor);
-
 				XDrawString(display, window, gc, 4, y, currentTarget->messages[i]->timestampString, strlen(currentTarget->messages[i]->timestampString));
 			}
 
 
-			if(currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) {
-				if(discordBridgeName && !strcmp(currentTarget->messages[i]->source, discordBridgeName)) {
-					isBridge = processForDiscordBridge(buffer, line, &linestart);
+			if(message->type == MESSAGE_TYPE_NORMAL) {
+				if(discordBridgeName && !strcmp(message->source, discordBridgeName)) {
+					isBridge = processForDiscordBridge(buffer, message->message, &linestart);
 				}
 				if(!isBridge) {
-					snprintf(buffer, 255, "<%s>", currentTarget->messages[i]->source);
+					snprintf(buffer, 255, "<%s>", message->source);
 				}
 
 				if(strlen(buffer) > 16) {
@@ -927,11 +1027,12 @@ void drawChatList() {
 
 		XSetForeground(display, gc, chatTextColor);
 
-		for(int lineOfMessage = 0; lineOfMessage < LinesPerMessage[i]; lineOfMessage++) {
-			int offset = (currentTarget->messages[i]->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
+		linestart = 0;
+		for(int lineOfMessage = 0; lineOfMessage < message->lineCount; lineOfMessage++) {
+			int offset = (message->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
 			int yline = (y+scrollValue-chatFontHeight)/chatFontHeight;
 			int drewLine = 0;
-			linewidth = LineBreaksPerMessage[i][lineOfMessage];
+			linewidth = message->lineBreaks[lineOfMessage];
 
 			if(y > -chatFontHeight) {
 				if(selectEndY>selectStartY || (selectEndY==selectStartY && selectEndX>selectStartX)) {
@@ -960,18 +1061,27 @@ void drawChatList() {
 				}
 
 				if(!drewLine) {
-						XDrawString(display, window, gc, offset, y, &line[linestart], MIN(linewidth, strlen(&line[linestart])));
+					XDrawString(display, window, gc, offset, y, &line[linestart], linewidth);
 				}
 			}
 			linestart += linewidth;
 			y += chatFontHeight;
 
-			if(y > curHeight+20) {
+			if(y > curHeight+chatFontHeight) {
 				break;
 			}
 				
 		}
-		free(line);
+
+		if(message->imagePreview != None) {
+			XCopyArea(display, message->imagePreview, window, gc, 0, 0, message->imagePreviewWidth, message->imagePreviewHeight, textOffset, y);
+			y += message->imagePreviewHeight;
+			y += chatFontHeight;
+			if(y > curHeight+chatFontHeight) {
+				break;
+			}
+		}
+
 	}
 }
 
@@ -1497,6 +1607,8 @@ int main(int argc, char** argv) {
 	selectStartY = -1;
 	selectEndX = -1;
 	selectEndY = -1;
+
+	regcomp(&urlRegex, URL_REGEX, REG_ICASE);
 
 	LoadPrefs(&prefs, altPrefsFile);
 	SavePrefs(&prefs, altPrefsFile);

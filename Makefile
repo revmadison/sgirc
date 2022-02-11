@@ -1,9 +1,10 @@
 #MOTIFLIBS = -lSgm -lXm -lXt -lXpm -lX11 -lPW
 MOTIFLIBS = -L/usr/Motif-2.1/lib32 -lXm -lXt -lX11 -lPW
-LLDLIBS=  $(MOTIFLIBS) 
+MBEDLIBS = /opt/local/lib32/libmbedtls.a /opt/local/lib32/libmbedx509.a /opt/local/lib32/libmbedcrypto.a
+LLDLIBS= $(MBEDLIBS) $(MOTIFLIBS) -lpthread -ljpeg -lpng 
 
 CC=c99
-CFLAGS=-mips3 -n32 -g -I/usr/Motif-2.1/include
+CFLAGS=-mips3 -n32 -g -I/usr/Motif-2.1/include -I/opt/local/include
 
 COBJECTS=\
 	sgirc.o \
@@ -11,6 +12,8 @@ COBJECTS=\
 	messagetarget.o \
 	message.o \
 	prefs.o \
+	imgpreview.o \
+	net.o \
 	thirdparty/cJSON.o \
 	$(NULL)
 

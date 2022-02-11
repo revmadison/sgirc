@@ -5,6 +5,8 @@
 #define MESSAGE_TYPE_SERVERMESSAGE 1
 #define MESSAGE_TYPE_ENDOFLOG 2
 
+#include <X11/X.h>
+
 struct IRCConnection;
 
 struct Message {
@@ -15,6 +17,18 @@ struct Message {
 	long timestamp;
 	char timestampString[32];
 	int type;
+
+	char *display;	// Removes control code, possibly unicode swaps
+
+	int brokenWidth;
+	int lineCount;
+	int *lineBreaks;
+
+	char *url;
+	Pixmap imagePreview;
+	int imagePreviewWidth;
+	int imagePreviewHeight;
+	int *cancelImageFetch;
 };
 
 struct Message *MessageInit(struct IRCConnection *connection, char *source, char *target, char *message);

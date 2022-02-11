@@ -35,12 +35,12 @@ int AddMessageTarget(struct IRCConnection *connection, char *targetName, char *t
 void AddMessageToTarget(struct MessageTarget *target, struct Message *message) {
 
 	if (target->messageAt >= target->messageCapacity) {
-		int halfcap = target->messageCapacity>>1;
-		for (int i = 0; i < halfcap; i++) {
-			MessageFree(target->messages[i]);
-			target->messages[i] = target->messages[halfcap+i];
+		MessageFree(target->messages[0]);
+		for (int i = 0; i < target->messageCapacity-1; i++) {
+			target->messages[i] = target->messages[i+1];
 		}
-		target->messageAt = halfcap;
+
+		target->messageAt = target->messageCapacity-1;
 	}
 
 	target->messages[target->messageAt] = message;
