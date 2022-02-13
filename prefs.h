@@ -19,6 +19,7 @@ struct ServerDetails {
 	int useSSL;
 	char *nick;
 	char *discordBridgeName;
+	char *connectCommands;
 };
 
 struct Prefs {
@@ -30,6 +31,7 @@ struct Prefs {
 	int connectOnLaunch;
 
 	int imagePreviewHeight;
+	int imagePreviewQuality;
 };
 
 int LoadPrefs(struct Prefs *prefs, char *prefsFile);

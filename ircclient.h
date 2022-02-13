@@ -11,6 +11,7 @@ typedef void (*IRCChannelJoinCallback)(struct IRCConnection *c, char *channel, c
 typedef void (*IRCChannelPartCallback)(struct IRCConnection *c, char *channel, char *name, char *message, void *userdata);	// name left #channel because #message
 typedef void (*IRCChannelQuitCallback)(struct IRCConnection *c, char *name, char *message, void *userdata);	// name left #channel because #message
 typedef void (*IRCChannelTopicCallback)(struct IRCConnection *c, char *channel, char *topic, void *userdata);			// name joined #chanel
+typedef void (*IRCChannelNickCallback)(struct IRCConnection *c, char *was, char *is, void *userdata);			// was is now known as is
 
 struct IRCConnection {
 	int activeSocket;
@@ -29,6 +30,7 @@ struct IRCConnection {
 	IRCChannelPartCallback partCallback;
 	IRCChannelQuitCallback quitCallback;
 	IRCChannelTopicCallback topicCallback;
+	IRCChannelNickCallback nickCallback;
 
 	void *userData;
 };

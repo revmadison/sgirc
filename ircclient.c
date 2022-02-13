@@ -164,6 +164,14 @@ struct Message *parseServerMessage(struct IRCConnection *c, char *srvmessage, vo
 		}
 	
 		c->quitCallback(c, source, partMessage, userdata);
+	} else if (!strcasecmp(command, "NICK")) {
+		int paramOffset = 0;
+		char *newNick = params+paramOffset;
+		if (*newNick == ':') {
+			newNick++;
+		}
+	
+		c->nickCallback(c, source, newNick, userdata);
 	} else if (!strcasecmp(command, "332")) {
 		int paramOffset = 0;
 		char *forwho = parseFirstWord(params, &paramOffset);

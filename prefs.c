@@ -76,6 +76,7 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 			prefs->servers[i].useSSL = 0;
 			prefs->servers[i].nick = NULL;
 			prefs->servers[i].discordBridgeName = NULL;
+			prefs->servers[i].connectCommands = NULL;
 
 			v = cJSON_GetObjectItem(entry, "serverName");
 			if(!v || cJSON_IsNull(v)) {
@@ -107,6 +108,10 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 			if(v && !cJSON_IsNull(v)) {
 				prefs->servers[i].discordBridgeName = strdup(cJSON_GetStringValue(v));
 			}
+			v = cJSON_GetObjectItem(entry, "connectCommands");
+			if(v && !cJSON_IsNull(v)) {
+				prefs->servers[i].connectCommands = strdup(cJSON_GetStringValue(v));
+			}
 		}
 	}
 
@@ -130,37 +135,9 @@ int LoadPrefs(struct Prefs *prefs, char *prefsFile) {
 	if(imagePreviewHeight && cJSON_IsNumber(imagePreviewHeight)) {
 		prefs->imagePreviewHeight = cJSON_GetNumberValue(imagePreviewHeight);
 	}
-
-	// Finally any deprecated options
-	cJSON *defaultServer = cJSON_GetObjectItem(prefsJSON, "defaultServer");
-	if(defaultServer && !cJSON_IsNull(defaultServer)) {
-		prefs->serverCount = 1;
-		prefs->servers = (struct ServerDetails *)malloc(prefs->serverCount * sizeof(struct ServerDetails));
-		
-		prefs->servers[0].serverName = strdup("Default connection");
-		prefs->servers[0].host = strdup(cJSON_GetStringValue(defaultServer));
-		prefs->servers[0].port = 0;
-		prefs->servers[0].pass = NULL;
-		prefs->servers[0].useSSL = 0;
-		prefs->servers[0].nick = NULL;
-		prefs->servers[0].discordBridgeName = NULL;
-
-		cJSON *defaultPort = cJSON_GetObjectItem(prefsJSON, "defaultPort");
-		if(defaultPort && cJSON_IsNumber(defaultPort)) {
-			prefs->servers[0].port = (int)cJSON_GetNumberValue(defaultPort);
-		}
-		cJSON *defaultPass = cJSON_GetObjectItem(prefsJSON, "defaultPass");
-		if(defaultPass && !cJSON_IsNull(defaultPass)) {
-			prefs->servers[0].pass = strdup(cJSON_GetStringValue(defaultPass));
-		}
-		cJSON *defaultNick = cJSON_GetObjectItem(prefsJSON, "defaultNick");
-		if(defaultNick && !cJSON_IsNull(defaultNick)) {
-			prefs->servers[0].nick = strdup(cJSON_GetStringValue(defaultNick));
-		}
-		cJSON *discordBridgeName = cJSON_GetObjectItem(prefsJSON, "discordBridgeName");
-		if(discordBridgeName && !cJSON_IsNull(discordBridgeName)) {
-			prefs->servers[0].discordBridgeName = strdup(cJSON_GetStringValue(discordBridgeName));
-		}
+	cJSON *imagePreviewQuality = cJSON_GetObjectItem(prefsJSON, "imagePreviewQuality");
+	if(imagePreviewQuality && cJSON_IsNumber(imagePreviewQuality)) {
+		prefs->imagePreviewQuality = cJSON_GetNumberValue(imagePreviewQuality);
 	}
 
 	cJSON_Delete(prefsJSON);
@@ -221,6 +198,11 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile) {
 			} else {
 				cJSON_AddNullToObject(entry, "discordBridgeName");
 			}
+			if(prefs->servers[i].connectCommands) {
+				cJSON_AddStringToObject(entry, "connectCommands", prefs->servers[i].connectCommands);
+			} else {
+				cJSON_AddNullToObject(entry, "connectCommands");
+			}
 
 			cJSON_AddItemToArray(servers, entry);
 		}
@@ -232,6 +214,7 @@ int SavePrefs(struct Prefs *prefs, char *prefsFile) {
 	cJSON_AddBoolToObject(prefsJSON, "saveLogs", prefs->saveLogs?1:0);
 	cJSON_AddBoolToObject(prefsJSON, "connectOnLaunch", prefs->connectOnLaunch?1:0);
 	cJSON_AddNumberToObject(prefsJSON, "imagePreviewHeight", prefs->imagePreviewHeight);
+	cJSON_AddNumberToObject(prefsJSON, "imagePreviewQuality", prefs->imagePreviewQuality);
 
 	char *prefsString = cJSON_Print(prefsJSON);
 	cJSON_Delete(prefsJSON);
@@ -284,6 +267,11 @@ void StoreServerDetails(struct Prefs *prefs, struct ServerDetails *details) {
 				prefs->servers[i].discordBridgeName = NULL;
 			}
 			prefs->servers[i].discordBridgeName = details->discordBridgeName ? strdup(details->discordBridgeName) : NULL;
+			if(prefs->servers[i].connectCommands) {
+				free(prefs->servers[i].connectCommands);
+				prefs->servers[i].connectCommands = NULL;
+			}
+			prefs->servers[i].connectCommands = details->connectCommands ? strdup(details->connectCommands) : NULL;
 
 			return;
 		}
@@ -306,6 +294,8 @@ void StoreServerDetails(struct Prefs *prefs, struct ServerDetails *details) {
 	prefs->servers[i].useSSL = details->useSSL;
 	prefs->servers[i].nick = details->nick ? strdup(details->nick) : NULL;
 	prefs->servers[i].discordBridgeName = details->discordBridgeName ? strdup(details->discordBridgeName) : NULL;
+	prefs->servers[i].connectCommands = details->connectCommands ? strdup(details->connectCommands) : NULL;
+
 }
 
 
