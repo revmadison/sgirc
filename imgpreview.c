@@ -8,8 +8,11 @@
 
 #include "imgpreview.h"
 #include "net.h"
+#include "prefs.h"
 
 #pragma set woff 3970
+
+extern struct Prefs prefs;
 
 struct jpeg_error_mgr err;
 
@@ -53,7 +56,90 @@ fflush(stdout);
 	src->next_input_byte = (const JOCTET *)buf;
 }
 
-int scaledImageFromPixbuf(char *pixbuf, int w, int h, struct ImagePreviewRequest *request) {
+int scaledImageFromPixbufNice(char *pixbuf, int w, int h, struct ImagePreviewRequest *request) {
+	if(!pixbuf || !w || !h) {
+		return 0;
+	}
+
+	int scaleCount = 0;
+	int neww = w;
+	int newh = h;
+	int scaler;
+	while((neww > request->maxWidth) || (newh > request->maxHeight)) {
+		scaleCount++;
+		neww>>=1;
+		newh>>=1;
+	};
+
+	for(scaler = 0; scaler < scaleCount; scaler++) {
+		neww = w>>1;
+		newh = h;
+		char *newpixbuf = (char *)malloc(neww*newh*4);
+		for(int y = 0; y < h; y++) {
+			for(int x = 0; x < w-1; x+=2) {
+				int dstoff = (y*neww+(x>>1))<<2;
+				int srcoff = (y*w+x)<<2;
+				newpixbuf[dstoff+0] = 
+					(pixbuf[srcoff+0]>>1) +
+					(pixbuf[srcoff+4]>>1) +
+					((pixbuf[srcoff+0]>>1)&(pixbuf[srcoff+4]>>1)&1);
+				newpixbuf[dstoff+1] = 
+					(pixbuf[srcoff+1]>>1) +
+					(pixbuf[srcoff+5]>>1) +
+					((pixbuf[srcoff+1]>>1)&(pixbuf[srcoff+5]>>1)&1);
+				newpixbuf[dstoff+2] = 
+					(pixbuf[srcoff+2]>>1) +
+					(pixbuf[srcoff+6]>>1) +
+					((pixbuf[srcoff+2]>>1)&(pixbuf[srcoff+6]>>1)&1);
+				newpixbuf[dstoff+3] = 
+					(pixbuf[srcoff+3]>>1) +
+					(pixbuf[srcoff+7]>>1) +
+					((pixbuf[srcoff+3]>>1)&(pixbuf[srcoff+7]>>1)&1);
+			}
+		}
+		free(pixbuf);
+		pixbuf = newpixbuf;
+		w = neww;
+	}
+	for(scaler = 0; scaler < scaleCount; scaler++) {
+		neww = w;
+		newh = h>>1;
+		char *newpixbuf = (char *)malloc(neww*newh*4);
+		for(int y = 0; y < h-1; y+=2) {
+			for(int x = 0; x < w; x++) {
+				int dstoff = ((y>>1)*neww+x)<<2;
+				int srcoff1 = (y*w+x)<<2;
+				int srcoff2 = ((y+1)*w+x)<<2;
+				newpixbuf[dstoff+0] = 
+					(pixbuf[srcoff1+0]>>1) +
+					(pixbuf[srcoff2+0]>>1) +
+					((pixbuf[srcoff1+0]>>1)&(pixbuf[srcoff2+0]>>1)&1);
+				newpixbuf[dstoff+1] = 
+					(pixbuf[srcoff1+1]>>1) +
+					(pixbuf[srcoff2+1]>>1) +
+					((pixbuf[srcoff1+1]>>1)&(pixbuf[srcoff2+1]>>1)&1);
+				newpixbuf[dstoff+2] = 
+					(pixbuf[srcoff1+2]>>1) +
+					(pixbuf[srcoff2+2]>>1) +
+					((pixbuf[srcoff1+2]>>1)&(pixbuf[srcoff2+2]>>1)&1);
+				newpixbuf[dstoff+3] = 
+					(pixbuf[srcoff1+3]>>1) +
+					(pixbuf[srcoff2+3]>>1) +
+					((pixbuf[srcoff1+3]>>1)&(pixbuf[srcoff2+3]>>1)&1);
+			}
+		}
+		free(pixbuf);
+		pixbuf = newpixbuf;
+		h = newh;
+	}
+
+	request->pixmapData = pixbuf;
+	request->pixmapWidth = w;
+	request->pixmapHeight = h;
+	return 1;
+}
+
+int scaledImageFromPixbufFast(char *pixbuf, int w, int h, struct ImagePreviewRequest *request) {
 	if(!pixbuf || !w || !h) {
 		return 0;
 	}
@@ -89,6 +175,14 @@ printf("Resizing image to %dx%d\n", neww, newh);
 	request->pixmapHeight = h;
 	return 1;
 }
+
+int scaledImageFromPixbuf(char *pixbuf, int w, int h, struct ImagePreviewRequest *request) {
+	if(prefs.imagePreviewQuality > 0) {
+		return scaledImageFromPixbufNice(pixbuf, w, h, request);
+	} else {
+		return scaledImageFromPixbufFast(pixbuf, w, h, request);
+	}
+} 
 
 int decompressJPEG(const unsigned char *buffer, const int size, struct ImagePreviewRequest *request) {
 	int rc, w, h, comp, stride;
