@@ -1057,6 +1057,10 @@ void drawChatList() {
 		struct Message *message = currentTarget->messages[i];
 		char *line = message->display;
 
+		if(!line) {
+			printf("*** ERROR: Message has null display string!\n");
+			continue;
+		}
 		int linestart = 0;
 		int linewidth = 0;
 		int linelen = strlen(line);
@@ -1065,7 +1069,11 @@ void drawChatList() {
 		if(y > -chatFontHeight) {
 			if(prefs.showTimestamp) {
 				XSetForeground(display, gc, chatTimeColor);
-				XDrawString(display, window, gc, 4, y, currentTarget->messages[i]->timestampString, strlen(currentTarget->messages[i]->timestampString));
+				if(!message->timestampString) {
+					printf("*** ERROR: Message has null timestamp string!\n");
+				} else {
+					XDrawString(display, window, gc, 4, y, message->timestampString, strlen(message->timestampString));
+				}
 			}
 
 
