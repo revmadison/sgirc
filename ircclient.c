@@ -166,6 +166,12 @@ struct Message *parseServerMessage(struct IRCConnection *c, char *srvmessage, vo
 		c->quitCallback(c, source, partMessage, userdata);
 	} else if (!strcasecmp(command, "NICK")) {
 		int paramOffset = 0;
+		if(!source) {
+			printf("*DBG: NICK command no source? '%s'\n", srvmessage);
+		}
+		if(!params) {
+			printf("*DBG: NICK command no params? '%s'\n", srvmessage);
+		}
 		char *newNick = params+paramOffset;
 		if (*newNick == ':') {
 			newNick++;

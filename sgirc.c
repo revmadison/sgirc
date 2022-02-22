@@ -18,6 +18,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <regex.h>
 #include <time.h>
 #include <unistd.h>
@@ -298,6 +299,31 @@ int processForDiscordBridge(char *buffer, const char *line, int *linestart) {
 	}
 }
 
+static int isImageURL(char *url) {
+	int len = strlen(url);
+	if(len > 4 && url[len-4] == '.' && 
+				  tolower(url[len-3]) == 'j' && 
+				  tolower(url[len-2]) == 'p' && 
+				  tolower(url[len-1]) == 'g') {
+		return 1;
+	}
+	if(len > 5 && url[len-5] == '.' && 
+				  tolower(url[len-4]) == 'j' && 
+				  tolower(url[len-3]) == 'p' && 
+				  tolower(url[len-2]) == 'e' && 
+				  tolower(url[len-1]) == 'g') {
+		return 1;
+	}
+	if(len > 4 && url[len-4] == '.' && 
+				  tolower(url[len-3]) == 'p' && 
+				  tolower(url[len-2]) == 'n' && 
+				  tolower(url[len-1]) == 'g') {
+		return 1;
+	}
+
+	return 0;
+}
+
 int prepareMessageForDisplay(struct Message *message, int width) {
 	if(message->brokenWidth == width && message->display != NULL && message->lineCount > 0) {
 		return message->lineCount;
@@ -329,13 +355,7 @@ int prepareMessageForDisplay(struct Message *message, int width) {
 			memcpy(url, message->display, len);
 			url[len] = 0;
 
-			if(prefs.imagePreviewHeight > 0 && len > 4 && url[len-4] == '.' && 
-					((url[len-3] == 'J' || url[len-3] == 'j') &&
-					 (url[len-2] == 'P' || url[len-2] == 'p') && 
-					 (url[len-1] == 'G' || url[len-1] == 'g')) ||
-					((url[len-3] == 'P' || url[len-3] == 'p') && 
-					 (url[len-2] == 'N' || url[len-2] == 'n') && 
-					 (url[len-1] == 'G' || url[len-1] == 'g'))) {
+			if(prefs.imagePreviewHeight > 0 && isImageURL(url)) {
 				// This is an image, let's grab it!
 				struct ImagePreviewRequest *req = initImagePreviewRequest(message, url, prefs.imagePreviewHeight*2, prefs.imagePreviewHeight);
 
@@ -710,7 +730,31 @@ void ircClientChannelTopicCallback(struct IRCConnection *c, char *channel, char 
 	}	
 }
 void ircClientNickCallback(struct IRCConnection *c, char *was, char *is, void *userdata) {
+	if(!was) {
+		printf("NICK callback: no old name\n");
+		return;
+	}
+	if(strlen(was) < 1) {
+		printf("NICK callback: old name empty\n");
+		return;
+	}
+	if(!is) {
+		printf("NICK callback: no new name\n");
+		return;
+	}
+	if(strlen(is) < 1) {
+		printf("NICK callback: new name empty\n");
+		return;
+	}
 	struct ServerDetails *details = (struct ServerDetails *)c->userData;
+	if(!details) {
+		printf("NICK callback: empty server details\n");
+		return;
+	}
+	if(!details->nick) {
+		printf("NICK callback: empty server nick\n");
+		return;
+	}
 	if(!strcmp(was, details->nick)) {
 		char buffer[1024];
 		snprintf(buffer, 1023, "** You are now known as %s", is);
@@ -870,14 +914,15 @@ void updateSelectionIndices() {
 	for(i = 0; i < currentTarget->messageAt; i++) {
 		struct Message *message = currentTarget->messages[i];
 		char *line = message->display;
-		int linestart = 0;
-		int linewidth = 0;
-		int linelen = strlen(line);
 
 		if(!line) {
 			printf("*** Error trying to select in unprepared message! ***\n");
 			continue;
 		}
+
+		int linestart = 0;
+		int linewidth = 0;
+		int linelen = strlen(line);
 
 		for(int lineOfMessage = 0; lineOfMessage < message->lineCount; lineOfMessage++) {
 			int offset = (message->type == MESSAGE_TYPE_NORMAL) ? textOffset : nameOffset;
@@ -958,6 +1003,12 @@ void captureSelection() {
 	for(i = 0; i < currentTarget->messageAt; i++) {
 		struct Message *message = currentTarget->messages[i];
 		char *line = message->display;
+
+		if(!line) {
+			printf("*** Error trying to capture in unprepared message! ***\n");
+			continue;
+		}
+
 		int linestart = 0;
 		int linewidth = 0;
 		int linelen = strlen(line);
