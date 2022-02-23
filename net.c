@@ -127,6 +127,29 @@ int readLine(SSLContext *ctx, unsigned char *line, const int lineLen)
 	}	
 }
 
+int readResponseCode(SSLContext *ctx)
+{
+	// First read headers
+	int ret;
+	unsigned char line[1024];
+	
+	ret = readLine(ctx, line, 1023);
+	if(ret <= 0) {
+		return ret;
+	}
+
+	char *firstSpace = strchr((const char *)line, ' ');
+	if(!firstSpace) {
+		return -1;
+	}
+
+	int responseCode = atoi(firstSpace);
+	//printf("Response code: %d\n", responseCode);
+	
+	//printf("Header: '%s'\n", line);
+	return responseCode;
+}
+
 int parseHeader(SSLContext *ctx)
 {
 	// First read headers
@@ -241,6 +264,7 @@ unsigned char *fetchURL(char *url, char *headers, int *outBufferLen) {
 	char *empty = "";
 	SSLContext ctx;
 	int isHttp = 0;
+	int responseCode;
 
 	initSSLContext(&ctx);
 
@@ -286,6 +310,13 @@ unsigned char *fetchURL(char *url, char *headers, int *outBufferLen) {
 			killSSLContext(&ctx);
 			return NULL;
 		}
+	}
+
+	responseCode = readResponseCode(&ctx);
+	if(responseCode < 200 || responseCode >= 300) {
+		printf("Server returned %d.\n", responseCode);
+		killSSLContext(&ctx);
+		return NULL;
 	}
 
 	while((ret = parseHeader(&ctx)) > 0) {

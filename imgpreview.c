@@ -6,6 +6,8 @@
 #include <jpeglib.h>
 #include <png.h>
 
+#include <setjmp.h>
+
 #include "imgpreview.h"
 #include "net.h"
 #include "prefs.h"
@@ -15,6 +17,7 @@
 extern struct Prefs prefs;
 
 struct jpeg_error_mgr err;
+jmp_buf jpegJmpBuffer;
 
 void init_mem_source(struct jpeg_decompress_struct *jd){}
 void term_source(struct jpeg_decompress_struct *jd) {}
@@ -184,18 +187,34 @@ int scaledImageFromPixbuf(char *pixbuf, int w, int h, struct ImagePreviewRequest
 	}
 } 
 
+void jpegErrorHandler(j_common_ptr cinfo) {
+	longjmp(jpegJmpBuffer, 1);
+}
+
 int decompressJPEG(const unsigned char *buffer, const int size, struct ImagePreviewRequest *request) {
 	int rc, w, h, comp, stride;
-	unsigned char *bmp;
+	unsigned char *bmp = NULL;
 	struct jpeg_decompress_struct jpgdec;
 	struct jpeg_source_mgr src;
 
 //printf("decompressJPEG with buffer %x of size %d\n", buffer, size);
 	jpgdec.err = jpeg_std_error(&err);
+	jpgdec.err->error_exit = jpegErrorHandler;
 	jpeg_create_decompress(&jpgdec);
 	jpgdec.src = &src;
 
 	jpeg_mem_src(&jpgdec, buffer, size);
+
+	if(setjmp(jpegJmpBuffer)) {
+		printf("Fatal error decoding JPEG.\n");
+		fflush(stdout);
+
+		jpeg_destroy_decompress(&jpgdec);
+		if(bmp) {
+			free(bmp);
+		}
+		return 0;
+	}
 
 	rc = jpeg_read_header(&jpgdec, TRUE);
 	if(rc != 1) {
