@@ -435,14 +435,17 @@ int recalculateMessageBreaks() {
 	return totalLines;
 }
 
-void recalculateBreaksAndScrollBar() {
+void recalculateBreaksAndScrollBar(int forceScroll) {
 	Dimension curHeight;
 	int windowHeight, chatHeight, totalLines;
+	int curMax, curValue, curSliderSize;
+	int shouldScroll;
 
 	XtVaGetValues(chatList, XmNheight, &curHeight, NULL);
 	windowHeight = curHeight;
 	totalLines = recalculateMessageBreaks();
 	chatHeight = MAX(windowHeight, (totalLines+1)*chatFontHeight);
+
 
 	if(currentTarget != NULL) {
 		for(int i = 0; i < currentTarget->messageAt; i++) {
@@ -454,9 +457,49 @@ void recalculateBreaksAndScrollBar() {
 	}
 	//printf("totalLines=%d\tfontHeight=%d\twinH=%d\tchatH=%d\n", totalLines,chatFontHeight,windowHeight,chatHeight);
 
-	XtVaSetValues(scrollbar, XmNmaximum, chatHeight, XmNsliderSize, windowHeight, XmNvalue, chatHeight-windowHeight, XmNpageIncrement, windowHeight>>1, NULL);
+	curMax = curValue = curSliderSize = 0;
+	XtVaGetValues(scrollbar, XmNmaximum, &curMax, XmNvalue, &curValue, XmNsliderSize, &curSliderSize, NULL);
+
+	if(curValue >= (curMax-curSliderSize-chatFontHeight)) {
+		shouldScroll = 1;
+	} else {
+		shouldScroll = 0;
+	}
+
+	if(forceScroll || shouldScroll) {
+		XtVaSetValues(scrollbar, XmNmaximum, chatHeight, XmNsliderSize, windowHeight, XmNvalue, chatHeight-windowHeight, XmNpageIncrement, windowHeight>>1, NULL);
+	} else {
+		XtVaSetValues(scrollbar, XmNmaximum, chatHeight, XmNsliderSize, windowHeight, XmNpageIncrement, windowHeight>>1, NULL);
+	}
 
 	forceRedraw();
+}
+
+void closeCurrentTarget(char *msg) {
+	if(currentTarget == NULL) {
+		return;
+	}
+
+	if(currentTarget->type == MESSAGETARGET_CHANNEL) {
+		char buffer[1024];
+		if(msg) {
+			snprintf(buffer, 1023, "PART %s", currentTarget->title);
+		} else {
+			snprintf(buffer, 1023, "PART %s :%s", currentTarget->title, msg);
+		}
+		sendIRCCommand(currentTarget->connection, buffer);
+	}
+
+	int removingIndex = currentTarget->index;
+	int newCount = RemoveMessageTarget(currentTarget);
+	if(newCount >= 0) {
+		MemberListFree(MessageTargetMembers[removingIndex]);
+		for(int i = removingIndex; i < newCount; i++) {
+			MessageTargetMembers[i] = MessageTargetMembers[i+1];
+		}
+	}
+			
+	SetupChannelList();
 }
 
 void handleTextInput(char *input) {
@@ -498,22 +541,7 @@ void handleTextInput(char *input) {
 			if(*start == '/') start++;
 
 			if(strstr(start, "CLOSE") == start || strstr(start, "close") == start) {
-				if(currentTarget->type == MESSAGETARGET_CHANNEL) {
-					char buffer[1024];
-					snprintf(buffer, 1023, "PART %s", currentTarget->title);
-					sendIRCCommand(currentTarget->connection, buffer);
-				}
-
-				int removingIndex = currentTarget->index;
-				int newCount = RemoveMessageTarget(currentTarget);
-				if(newCount >= 0) {
-					MemberListFree(MessageTargetMembers[removingIndex]);
-					for(int i = removingIndex; i < newCount; i++) {
-						MessageTargetMembers[i] = MessageTargetMembers[i+1];
-					}
-				}
-			
-				SetupChannelList();
+				closeCurrentTarget(NULL);
 				skipSendingCommand = 1;
 			}
 
@@ -525,26 +553,10 @@ void handleTextInput(char *input) {
 				SetupChannelList();
 			}
 			if(strstr(start, "PART") == start || strstr(start, "part") == start) {
-				if (currentTarget != NULL && currentTarget->type == MESSAGETARGET_CHANNEL) {
-					char buffer[1024];
-
-					if(start[4] == ' ' && start[5] != ' ' && start[5] != 0 && start[5] != '#' && start[5] != '!' && start[5] != '&') {
-						snprintf(buffer, 1023, "PART %s :%s", currentTarget->title, start+5);
-					} else {
-						snprintf(buffer, 1023, "PART %s", currentTarget->title);
-					}
-					sendIRCCommand(currentTarget->connection, buffer);
-
-					int removingIndex = currentTarget->index;
-					int newCount = RemoveMessageTarget(currentTarget);
-					if(newCount >= 0) {
-						MemberListFree(MessageTargetMembers[removingIndex]);
-						for(int i = removingIndex; i < newCount; i++) {
-							MessageTargetMembers[i] = MessageTargetMembers[i+1];
-						}
-					}
-				
-					SetupChannelList();
+				if(start[4] == ' ' && start[5] != ' ' && start[5] != 0 && start[5] != '#' && start[5] != '!' && start[5] != '&') {
+					closeCurrentTarget(start+5);
+				} else {
+					closeCurrentTarget(NULL);
 				}
 				skipSendingCommand = 1;
 			}
@@ -605,7 +617,7 @@ void handleTextInput(char *input) {
 	}
 
 	if(needRedraw) {
-		recalculateBreaksAndScrollBar();
+		recalculateBreaksAndScrollBar(1);
 	}
 }
 
@@ -625,12 +637,15 @@ void textInputCallback(Widget textField, XtPointer client_data, XtPointer call_d
 
 void switchToMessageTarget(struct MessageTarget *target) {
 	currentTarget = target;
-	recalculateBreaksAndScrollBar();
+	recalculateBreaksAndScrollBar(1);
 	SetupNamesList();
-	MessageTargetHasUpdate[target->index] = 0;
-	RefreshChannelList();
 
-	XmTextFieldSetString(titleField, target->topic?target->topic:target->title);
+	if(target) {
+		MessageTargetHasUpdate[target->index] = 0;
+		XmTextFieldSetString(titleField, target->topic?target->topic:target->title);
+	}
+
+	RefreshChannelList();
 }
 
 void channelSelectedCallback(Widget chanList, XtPointer userData, XtPointer callData) {
@@ -666,7 +681,7 @@ void ircClientUpdateCallback(struct IRCConnection *c, struct Message *message, v
 		AddMessageToTarget(target, message);
 
 		if(target == currentTarget) {
-			recalculateBreaksAndScrollBar();
+			recalculateBreaksAndScrollBar(0);
 		} else {
 			MessageTargetHasUpdate[target->index] = 1;
 			RefreshChannelList();
@@ -828,7 +843,7 @@ void updateTimerCallback(XtPointer clientData, XtIntervalId *timer) {
 						req->message->imagePreview = pixmap;
 						req->message->imagePreviewWidth = req->pixmapWidth;
 						req->message->imagePreviewHeight = req->pixmapHeight;
-						recalculateBreaksAndScrollBar();
+						recalculateBreaksAndScrollBar(0);
 					} else {
 						req->message->imagePreviewWidth = 0;
 						req->message->imagePreviewHeight = 0;
@@ -847,7 +862,7 @@ void updateTimerCallback(XtPointer clientData, XtIntervalId *timer) {
 	
 
 void chatListResizeCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
-	recalculateBreaksAndScrollBar();
+	recalculateBreaksAndScrollBar(1);
 }
 
 void scrollbarChangedCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
@@ -1713,7 +1728,23 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 	case 0:	// Connect...
 		makeConnectionDialog();
 		break;
-	case 1:	// Set nick...
+	case 1:	// Disconnect
+		{
+			if(currentTarget != NULL && currentTarget->connection != NULL) {
+				struct IRCConnection *connection = currentTarget->connection;
+				int num = RemoveAllMessageTargetsForConnection(connection);
+				disconnectFromServer(connection);
+
+				if(num > 0) {
+					switchToMessageTarget(&MessageTargets[0]);
+				} else {
+					switchToMessageTarget(NULL);
+				}
+				SetupChannelList();
+			}
+		}
+		break;
+	case 2:	// Set nick...
 		{
 			Widget dialog;
 			XmString str = XmStringCreateLocalized("Enter your nick:");
@@ -1738,11 +1769,25 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 			XtManageChild(dialog);
 		}
 		break;
-	case 2:	// Exit
+	case 3:	// Exit
 		XtAppSetExitFlag(app);
 		break;
 	}
 }
+
+void chatMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
+	// client_data is an int for index of menu item
+	switch((int)client_data) {
+	case 0:	// Close
+		if(currentTarget->type == MESSAGETARGET_SERVER) {
+			// Do nothing? Should pick server->disconnect instead
+			return;
+		}
+		closeCurrentTarget(NULL);
+		break;
+	}
+}
+
 
 void printUsage() {
 	printf("Usage: sgirc [-n <nick>] [-s <server>] [-p <port>] [-f <prefs file>]\n");
@@ -1802,25 +1847,38 @@ int main(int argc, char** argv) {
 
 	formLayout = XtVaCreateWidget("formLayout", xmFormWidgetClass, panes, XmNpaneMinimum, 250, NULL);
 
-	XmString file = XmStringCreateLocalized("File");
+	XmString file = XmStringCreateLocalized("Server");
+	XmString chat = XmStringCreateLocalized("Chat");
 	menubar = XmVaCreateSimpleMenuBar(mainWindow, "menubar", 
-		XmVaCASCADEBUTTON, file, 'F',
+		XmVaCASCADEBUTTON, file, 'S',
+		XmVaCASCADEBUTTON, chat, 'C',
 		NULL);
 	XmStringFree(file);
+	XmStringFree(chat);
 	XtManageChild(menubar);
 
 	XmString connect = XmStringCreateLocalized("Connect...");
+	XmString disconnect = XmStringCreateLocalized("Disconnect");
 	XmString setNick = XmStringCreateLocalized("Set nick...");
 	XmString exit = XmStringCreateLocalized("Exit");
 	XmVaCreateSimplePulldownMenu(menubar, "fileMenu", 0, fileMenuSimpleCallback,
 		XmVaPUSHBUTTON, connect, 'C', NULL, NULL,
+		XmVaPUSHBUTTON, disconnect, 'D', NULL, NULL,
+		XmVaSEPARATOR,
 		XmVaPUSHBUTTON, setNick, 'n', NULL, NULL,
 		XmVaSEPARATOR,
 		XmVaPUSHBUTTON, exit, 'x', NULL, NULL,
 		NULL);
 	XmStringFree(connect);
+	XmStringFree(disconnect);
 	XmStringFree(setNick);
 	XmStringFree(exit);
+
+	XmString close = XmStringCreateLocalized("Close");
+	XmVaCreateSimplePulldownMenu(menubar, "chatMenu", 1, chatMenuSimpleCallback,
+		XmVaPUSHBUTTON, close, 'C', NULL, NULL,
+		NULL);
+	XmStringFree(close);
 
 	XtVaSetValues(mainWindow, XmNmenuBar, menubar, XmNworkWindow, panes, NULL);
 

@@ -32,6 +32,7 @@ struct MessageTarget * FindMessageTargetByName(struct IRCConnection *connection,
 
 int RemoveMessageTarget(struct MessageTarget *target);
 void RemoveAllMessageTargets();
+int RemoveAllMessageTargetsForConnection(struct IRCConnection *connection);
 
 void AddMessageToTarget(struct MessageTarget *target, struct Message *message);
 

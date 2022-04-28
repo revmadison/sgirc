@@ -71,10 +71,12 @@ int RemoveMessageTarget(struct MessageTarget *target) {
 				free(target->topic);
 				target->topic = NULL;
 			}
-
+			
+			free(MessageTargetNames[i]);
 			for(int l = i; l < NumMessageTargets-1; l++) {
 				MessageTargets[l] = MessageTargets[l+1];
 				MessageTargets[l].index = l;
+				MessageTargetNames[l] = MessageTargetNames[l+1];
 			}
 			NumMessageTargets--;
 			return NumMessageTargets;
@@ -98,6 +100,38 @@ void RemoveAllMessageTargets() {
 	}
 	NumMessageTargets = 0;
 }
+
+int RemoveAllMessageTargetsForConnection(struct IRCConnection *connection) {
+	for(int i = 0; i < NumMessageTargets; i++) {
+		struct MessageTarget *target = &MessageTargets[i];
+
+		if(target->connection == connection) {
+			for(int m = 0; m < target->messageAt; m++) {
+				MessageFree(target->messages[m]);
+			}
+			free(target->messages);
+			free(target->title);
+
+			if(target->topic) {
+				free(target->topic);
+				target->topic = NULL;
+			}
+
+			free(MessageTargetNames[i]);
+			for(int l = i; l < NumMessageTargets-1; l++) {
+				MessageTargets[l] = MessageTargets[l+1];
+				MessageTargets[l].index = l;
+				MessageTargetNames[l] = MessageTargetNames[l+1];
+			}
+
+			NumMessageTargets--;
+			i--;
+		}
+	}
+	return NumMessageTargets;
+
+}
+	
 	
 void SetMessageTargetTopic(struct MessageTarget *target, char *topic) {
 	if(target->topic) {
