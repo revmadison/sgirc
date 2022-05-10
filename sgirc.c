@@ -1283,6 +1283,26 @@ void selection(Widget widget, XEvent *event, String *args, Cardinal *num_args) {
 	forceRedraw();
 }
 
+void inputCustomization(Widget widget, XEvent *event, String *args, Cardinal *num_args) {
+	if(!strcmp("up", args[0])) {
+		XmTextFieldSetCursorPosition(widget, 0);
+	} else if(!strcmp("sup", args[0])) {
+		XmTextPosition cur = XmTextFieldGetCursorPosition(widget);
+		XmTextFieldSetSelection(widget, 0, cur, XtLastTimestampProcessed(XtDisplay(widget)));
+		XmTextFieldSetCursorPosition(widget, 0);
+	} else if(!strcmp("down", args[0])) {
+		XmTextFieldSetCursorPosition(widget, XmTextFieldGetLastPosition(widget));
+	} else if(!strcmp("sdown", args[0])) {
+		XmTextPosition cur = XmTextFieldGetCursorPosition(widget);
+		XmTextPosition last = XmTextFieldGetLastPosition(widget);
+		XmTextFieldSetSelection(widget, cur, last, XtLastTimestampProcessed(XtDisplay(widget)));
+		XmTextFieldSetCursorPosition(widget, last);
+	} else {
+		printf("inputCustomization(\"%s\")\n", args[0]);
+	}
+}
+
+
 char *stringFromXmString(XmString xmString) {
 	XmStringContext context;
 	char buffer[1024];
@@ -1885,6 +1905,9 @@ int main(int argc, char** argv) {
 	actions.string = "selection";
 	actions.proc = selection;
 	XtAppAddActions(app, &actions, 1);
+	actions.string = "inputCustomization";
+	actions.proc = inputCustomization;
+	XtAppAddActions(app, &actions, 1);
 
 
 	n = 0;
@@ -2003,6 +2026,8 @@ int main(int argc, char** argv) {
 	XtAddCallback(scrollbar, XmNvalueChangedCallback, scrollbarChangedCallback, NULL);
 	XtAddCallback(textField, XmNactivateCallback, textInputCallback, chatList);
 	XtAddCallback(channelList, XmNbrowseSelectionCallback, channelSelectedCallback,  NULL);
+
+	XtOverrideTranslations(textField, XtParseTranslationTable("Shift<Key>osfUp: inputCustomization(sup)\n<Key>osfUp: inputCustomization(up)\nShift<Key>osfDown: inputCustomization(sdown)\n<Key>osfDown: inputCustomization(down)"));
 
 	gcv.foreground = chatTextColor;
 	gcv.background = chatBGColor;
