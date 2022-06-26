@@ -2,6 +2,7 @@
 #include <Xm/CutPaste.h>
 #include <Xm/DialogS.h>
 #include <Xm/DrawingA.h>
+#include <Xm/FileSB.h>
 #include <Xm/Form.h>
 #include <Xm/Label.h>
 #include <Xm/List.h>
@@ -22,11 +23,13 @@
 #include <regex.h>
 #include <time.h>
 #include <unistd.h>
+#include <pthread.h>
 #include "imgpreview.h"
 #include "ircclient.h"
 #include "messagetarget.h"
 #include "message.h"
 #include "memberlist.h"
+#include "net.h"
 #include "prefs.h"
 
 #define URL_REGEX "https:/\\{1,3\\}[a-z0-9.-]\\{1,\\}[.][a-z]\\{2,4\\}[^[:space:]()<>]*"
@@ -67,6 +70,7 @@ struct ImagePreviewRequest *pendingPreviewRequests = NULL;
 
 static XtAppContext  app;
 static Widget window, chatList, channelList, namesList, scrollbar, titleField;
+static Widget textEntryField;
 static XFontStruct *chatFontStruct;
 static GC chatGC;
 static GC selectedGC;
@@ -108,6 +112,9 @@ static struct ChannelListEntry *channelListEntries = NULL;
 static int channelListCount = 0;
 
 static regex_t urlRegex;
+
+pthread_mutex_t uploadedURLMutex;
+char *uploadedURL = NULL;
 
 void FreeImagePreview(Pixmap pixmap) {
 	XFreePixmap(XtDisplay(chatList), pixmap);
@@ -856,6 +863,15 @@ void updateTimerCallback(XtPointer clientData, XtIntervalId *timer) {
 			free(req);
 		}
 	}
+
+	pthread_mutex_lock(&uploadedURLMutex);
+	if(uploadedURL) {
+		XtVaSetValues(textEntryField, XmNeditable, 1, NULL);
+		XmTextFieldSetString(textEntryField, uploadedURL);
+		free(uploadedURL);
+		uploadedURL = NULL;
+	}
+	pthread_mutex_unlock(&uploadedURLMutex);
 
 	XtAppAddTimeOut(*app, 50, updateTimerCallback, app);
 }
@@ -1795,10 +1811,90 @@ void fileMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call
 	}
 }
 
+static void *uploadImageThread(void *arg) {
+	char *selectedName = (char *)arg;
+
+	// Upload to 0x0.st?
+	int outSize = 0;
+	unsigned char *ret = postFile("https://0x0.st/", "", selectedName, &outSize);
+
+	if(ret && outSize > 0) {
+		char *url = (char *)malloc(outSize+1);
+		memcpy(url, ret, outSize);
+		url[outSize] = 0;
+		outSize--;
+
+		while(outSize > 1) {
+			if(url[outSize] == '\r' || url[outSize] == '\n') {
+				url[outSize] = 0;
+				outSize--;
+			} else {
+				break;
+			}
+		}
+
+		pthread_mutex_lock(&uploadedURLMutex);
+		if(uploadedURL) {
+			free(uploadedURL);
+		}
+		uploadedURL = strdup(url);
+		pthread_mutex_unlock(&uploadedURLMutex);
+
+		printf("URL: [%s]\n", url);
+		free(url);
+		free(ret);
+	}
+
+	free(arg);
+	return NULL;
+}
+
+static void addFileCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
+	XmFileSelectionBoxCallbackStruct *cbs = (XmFileSelectionBoxCallbackStruct *)call_data;
+
+	char *dirname = stringFromXmString(cbs->dir);
+	char *filename = stringFromXmString(cbs->value);
+
+	char *selectedName = strdup(filename);
+
+	printf("Selected to upload %s\n", selectedName);
+
+	pthread_t tid;
+
+	XtVaSetValues(textEntryField, XmNeditable, 0, NULL);
+
+	int ret = pthread_create(&tid, NULL, uploadImageThread, selectedName);
+
+	XtUnmanageChild((Widget)client_data);
+}
+
+static void addFileCancelCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
+	XtUnmanageChild((Widget)client_data);
+//	XtDestroyWidget((Widget)client_data);
+}
+
 void chatMenuSimpleCallback(Widget widget, XtPointer client_data, XtPointer call_data) {
 	// client_data is an int for index of menu item
 	switch((int)client_data) {
-	case 0:	// Close
+	case 0:	// Send file
+		{
+			Arg args[32];
+			int n = 0;
+			XtSetArg(args[n], XmNpathMode, XmPATH_MODE_RELATIVE); n++;
+
+			XtSetArg(args[n], XmNfileTypeMask, XmFILE_REGULAR); n++;
+			Widget dialog = XmCreateFileSelectionDialog(window, "filesb", args, n);
+			XtAddCallback(dialog, XmNcancelCallback, addFileCancelCallback, dialog);
+			XtAddCallback(dialog, XmNokCallback, addFileCallback, dialog);
+
+			XtManageChild(dialog);
+
+		}
+		break;
+	case 1:	// Close
+		if(currentTarget == NULL) {
+			return;
+		}
 		if(currentTarget->type == MESSAGETARGET_SERVER) {
 			// Do nothing? Should pick server->disconnect instead
 			return;
@@ -1841,6 +1937,11 @@ int main(int argc, char** argv) {
 	SavePrefs(&prefs, altPrefsFile);
 
 	NumMessageTargets = 0;
+
+	if(pthread_mutex_init(&uploadedURLMutex, NULL)) {
+		printf("Failed to initialize mutex\n");
+		return 0;
+	}
 
 	XtSetLanguageProc(NULL, NULL, NULL);
 
@@ -1894,10 +1995,13 @@ int main(int argc, char** argv) {
 	XmStringFree(setNick);
 	XmStringFree(exit);
 
+	XmString sendFile = XmStringCreateLocalized("Send file");
 	XmString close = XmStringCreateLocalized("Close");
 	XmVaCreateSimplePulldownMenu(menubar, "chatMenu", 1, chatMenuSimpleCallback,
+		XmVaPUSHBUTTON, sendFile, 'S', NULL, NULL,
 		XmVaPUSHBUTTON, close, 'C', NULL, NULL,
 		NULL);
+	XmStringFree(sendFile);
 	XmStringFree(close);
 
 	XtVaSetValues(mainWindow, XmNmenuBar, menubar, XmNworkWindow, panes, NULL);
@@ -1922,6 +2026,7 @@ int main(int argc, char** argv) {
 	titleField = XtVaCreateManagedWidget("titleField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNtopAttachment, XmATTACH_FORM, XmNeditable, 0, NULL);
 
 	textField = XtVaCreateManagedWidget("textField", xmTextFieldWidgetClass, formLayout, XmNleftAttachment, XmATTACH_FORM, XmNrightAttachment, XmATTACH_FORM, XmNbottomAttachment, XmATTACH_FORM, NULL);
+	textEntryField = textField;
 
 	n = 0;
 	XtSetArg(args[n], XmNbottomAttachment, XmATTACH_WIDGET); n++;

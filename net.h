@@ -39,5 +39,7 @@ typedef struct {
 #define ENCODING_CHUNKED 2
 
 unsigned char *fetchURL(char *url, char *headers, int *outBufferLen);
+unsigned char *postFile(char *url, char *headers, char *filename, 
+	int *outBufferLen);
 
 #endif

@@ -11,6 +11,9 @@
 #include "net.h"
 
 #define REQ_FMT "%s /%s HTTP/1.1\r\nHost: %s\r\n%s\r\n"
+#define POST_FMT "POST /%s HTTP/1.1\r\nHost: %s\r\nUser-Agent: sgirc/0.1.1\r\nContent-Length: %d\r\nContent-Type: multipart/form-data; boundary=--sgircboundary\r\n%s\r\n"
+#define BOUNDARY_START "----sgircboundary\r\nContent-Disposition: form-data; name=\"file\"; filename=\"%s\"\r\nContent-Type: application/octet-stream\r\nContent-Transfer-Encoding: binary\r\n\r\n"
+#define BOUNDARY_CLOSE "\r\n----sgircboundary--\r\n"
 
 static void my_debug(void *ctx, int level, const char *file, int line, const char *str)
 {
@@ -163,7 +166,7 @@ int parseHeader(SSLContext *ctx)
 
 	if(strstr((char *)line, "Transfer-Encoding: chunked")) {
 		ctx->encoding = ENCODING_CHUNKED;
-//		printf("Using chunked encoding...\n");
+		//printf("Using chunked encoding...\n");
 	} else if(strstr((char *)line, "Content-Length:")) {
 		char *at = strchr((char *)line, ':');
 		int len = 0;
@@ -231,6 +234,11 @@ unsigned char *readBody(SSLContext *ctx, int *outBufferLen) {
 	unsigned char *buffer;
 	int bufferAt;
 	int ret, len;
+
+	if(ctx->contentLength == -1) {
+		printf("No content length...\n");
+	}
+
 
 	len = ctx->contentLength;
 
@@ -317,6 +325,156 @@ unsigned char *fetchURL(char *url, char *headers, int *outBufferLen) {
 		printf("Server returned %d.\n", responseCode);
 		killSSLContext(&ctx);
 		return NULL;
+	}
+
+	while((ret = parseHeader(&ctx)) > 0) {
+		// Parsing a header...
+	}
+	if(ret < 0) {
+		printf("last parseHeader returned %d\n", ret);
+	}
+
+	if(ctx.encoding == ENCODING_CHUNKED) {
+		retBuffer = readChunkedBody(&ctx, outBufferLen);
+	} else if(ctx.contentLength > 0 && ctx.contentLength < (64*1024*1024)) {
+		retBuffer = readBody(&ctx, outBufferLen);
+	}
+	killSSLContext(&ctx);
+	return retBuffer;
+
+}
+
+unsigned char *postFile(char *url, char *headers, char *filename, int *outBufferLen) {
+	char *host = strdup(url+8);
+	char *port = strchr(host, ':');
+	char *slash = strchr(host, '/');
+	unsigned char *retBuffer = NULL;
+	int ret, len;
+	char buffer[1024];
+	char start[1024];
+	char *empty = "";
+	char *fileBuffer = NULL;
+	int fileSize = 0;
+	SSLContext ctx;
+	int isHttp = 0;
+	int responseCode;
+
+	FILE *fp = fopen(filename, "rb");
+	if(!fp) {
+		printf("Unable to open file %s\n", filename);
+		return NULL;
+	}
+	fseek(fp, 0, SEEK_END);
+	fileSize = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	printf("Chosen file is %d bytes\n", fileSize);
+
+	fileBuffer = (char *)malloc(fileSize);
+	len = fread(fileBuffer, fileSize, 1, fp);
+	fclose(fp);
+	
+	initSSLContext(&ctx);
+
+	if(strstr(url, "http://") == url) {
+		isHttp = 1;
+		free(host);
+		host = strdup(url+7);
+		port = strchr(host, ':');
+		slash = strchr(host, '/');
+	} else if(strstr(url, "https://") != url) {
+		printf("URL doesn't start with https:// - %s\n", url);
+		return NULL;
+	}
+
+	if(port && slash && port < slash) {
+		*port = 0;
+		port++;
+	}
+	if(slash) {
+		*slash = 0;
+		slash++;
+		//printf("Request path: %s\n", slash);
+	} else {
+		slash = empty;
+	}
+
+	//printf("\n . Connecting to %s:%s..", host, port?port:(isHttp?"80":"443"));
+
+	ret = sslConnect(&ctx, host, port?port:(isHttp?"80":"443"));
+	if(ret) {
+		printf("FAILED with code %d\n", ret);
+		return 0;
+	}
+
+	char *lastslash=strrchr(filename, '/');
+	if(lastslash) {
+		lastslash++;
+	} else {
+		lastslash = filename;
+	}
+printf("Decided filename is '%s'\n", lastslash);
+
+	snprintf(start, 1023, BOUNDARY_START, lastslash);
+
+	int totalSize = fileSize+strlen(start)+strlen(BOUNDARY_CLOSE);
+	snprintf(buffer, 1023, POST_FMT, slash, host, totalSize, headers?headers:"");
+
+//printf("SENDING:\n*\n%s\n*\n", buffer);
+	len = strlen(buffer);
+	while ((ret = mbedtls_ssl_write(&ctx.ssl, (unsigned char *)buffer, len)) <= 0)
+	{
+		if (ret != 0)
+		{
+			printf("failed to write data!\n");
+			killSSLContext(&ctx);
+			return NULL;
+		}
+	}
+
+	strcpy(buffer, start);
+	len = strlen(buffer);
+	while ((ret = mbedtls_ssl_write(&ctx.ssl, (unsigned char *)buffer, len)) <= 0)
+	{
+		if (ret != 0)
+		{
+			printf("failed to write data!\n");
+			killSSLContext(&ctx);
+			return NULL;
+		}
+	}
+
+	len = 0;
+	while(len < fileSize) {
+		ret = mbedtls_ssl_write(&ctx.ssl, (unsigned char *)fileBuffer+len, fileSize-len);
+		if(ret < 0) {
+			printf("failed to write data!\n");
+			killSSLContext(&ctx);
+			return NULL;
+		} else if(ret == 0) {
+			continue;
+		} else {
+			//printf("Wrote %d of %d remaining bytes\n", ret, fileSize-len);
+			len += ret;
+		}
+	}
+
+	snprintf(buffer, 1023, BOUNDARY_CLOSE);
+	len = strlen(buffer);
+	while ((ret = mbedtls_ssl_write(&ctx.ssl, (unsigned char *)buffer, len)) <= 0)
+	{
+		if (ret != 0)
+		{
+			printf("failed to write data!\n");
+			killSSLContext(&ctx);
+			return NULL;
+		}
+	}
+
+	responseCode = readResponseCode(&ctx);
+	if(responseCode < 200 || responseCode >= 300) {
+		printf("Server returned %d.\n", responseCode);
+//		killSSLContext(&ctx);
+//		return NULL;
 	}
 
 	while((ret = parseHeader(&ctx)) > 0) {
