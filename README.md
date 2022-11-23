@@ -2,6 +2,7 @@
 
 A super simple / barebones IRC client written as an exercise in learning Motif.
 Focused on providing a native look and feel on SGIs.
+It does require [Mbed-TLS](https://github.com/Mbed-TLS/mbedtls) to build. I need to revisit what changes are needed to get that building on IRIX or potentially provide a fork in the future.
 
 Extremely early, many bugs exist, many things don't work.
 
